@@ -21,6 +21,7 @@ def create_subscription(plan_id):
     }
     r = requests.post(f"{BASE}/v1/billing/subscriptions", headers=headers(), json=body)
     print("Create:", r.status_code)
+    print(r.text)
     r.raise_for_status()
     data = r.json()
     print("Subscription ID:", data["id"])
