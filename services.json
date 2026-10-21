@@ -1,0 +1,22 @@
+{
+  "StreamFlix": {
+    "plan_id": "P-5SV898982C762713NNLL5NRY",
+    "price": 9.99
+  },
+  "CloudNotes": {
+    "plan_id": "P-10854150ML005164UNLMHCFI",
+    "price": 4.99
+  },
+  "FitPass": {
+    "plan_id": "P-3WX58896YP754790KNLMHCFY",
+    "price": 19.99
+  },
+  "TuneBox": {
+    "plan_id": "P-20F54271V53148300NLMHCGA",
+    "price": 10.99
+  },
+  "PixelPro": {
+    "plan_id": "P-5B9846398U602622TNLMHCGQ",
+    "price": 14.99
+  }
+}
