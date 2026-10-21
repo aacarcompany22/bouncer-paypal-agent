@@ -38,3 +38,32 @@ def cancel_subscription(sub_id):
         json={"reason": "Cancelled by Bouncer"},
     )
     r.raise_for_status()
+def suspend_subscription(sub_id):
+    r = requests.post(
+        f"{BASE}/v1/billing/subscriptions/{sub_id}/suspend",
+        headers=headers(),
+        json={"reason": "Paused by Bouncer"},
+    )
+    r.raise_for_status()
+
+
+def activate_subscription(sub_id):
+    r = requests.post(
+        f"{BASE}/v1/billing/subscriptions/{sub_id}/activate",
+        headers=headers(),
+        json={"reason": "Resumed by Bouncer"},
+    )
+    r.raise_for_status()
+
+
+def list_transactions(sub_id):
+    r = requests.get(
+        f"{BASE}/v1/billing/subscriptions/{sub_id}/transactions",
+        headers=headers(),
+        params={
+            "start_time": "2026-01-01T00:00:00.000Z",
+            "end_time": "2027-12-31T23:59:59.000Z",
+        },
+    )
+    r.raise_for_status()
+    return r.json().get("transactions", [])  
