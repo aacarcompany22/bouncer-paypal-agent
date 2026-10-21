@@ -7,6 +7,8 @@ import streamlit as st
 import db
 import paypal_api
 
+import ai
+
 st.set_page_config(page_title="Bouncer", page_icon="🛡️", layout="wide")
 db.init_db()
 
@@ -100,3 +102,26 @@ for s in subs:
                 st.rerun()
             except Exception as e:
                 st.error(f"Cancel failed: {e}")
+st.divider()
+st.subheader("🤖 Bouncer AI advice")
+
+if st.button("Analyse my subscriptions"):
+    to_analyse = [
+        {"service": s["service"], "monthly_price": s["price"], "status": s["status"]}
+        for s in subs
+        if s["status"] in ("ACTIVE", "APPROVED")
+    ]
+    if not to_analyse:
+        st.info("Activate at least one subscription first.")
+    else:
+        with st.spinner("Claude is reviewing your subscriptions..."):
+            try:
+                advice = ai.get_advice(to_analyse)
+                st.write(advice["summary"])
+                for sug in advice["suggestions"]:
+                    st.success(
+                        f"**{sug['service']} → {sug['alternative']}**: "
+                        f"save about ${sug['monthly_saving']:.2f}/month. {sug['reason']}"
+                    )
+            except Exception as e:
+                st.error(f"AI advice failed: {e}")
