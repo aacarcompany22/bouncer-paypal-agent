@@ -1,7 +1,9 @@
 
 import json
 import anthropic
+from dotenv import load_dotenv
 
+load_dotenv()  # load .env before the client is created
 client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from .env via the environment
 MODEL = "claude-sonnet-5-5"  # same model name your smoke test used
 

@@ -61,12 +61,12 @@ def list_subscriptions():
 def add_event(event_id, event_type, sub_id, detail):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with connect() as conn:
-        # INSERT OR IGNORE: PayPal sometimes re-sends an event, so duplicates are skipped
-        conn.execute(
+        cur = conn.execute(
             "INSERT OR IGNORE INTO events (event_id, event_type, sub_id, detail, received_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (event_id, event_type, sub_id, detail, now),
         )
+        return cur.rowcount > 0
 
 
 def list_events(limit=15):
