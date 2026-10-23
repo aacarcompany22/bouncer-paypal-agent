@@ -92,3 +92,6 @@ def set_setting(key, value):
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value))
         )
+def update_price_for_plan(plan_id, price):
+    with connect() as conn:
+        conn.execute("UPDATE subscriptions SET price = ? WHERE plan_id = ?", (price, plan_id))
