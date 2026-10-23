@@ -282,3 +282,38 @@ for p in list(st.session_state.proposals):
     if b.button("✖ Dismiss", key=f"dismiss_{p['id']}"):
         st.session_state.proposals.remove(p)
         st.rerun()
+# ---------- Price watch ----------
+st.divider()
+st.subheader("🏷️ Price watch")
+st.caption("Merchant demo controls: simulate a service raising its price through PayPal's API. "
+           "Bouncer then warns you about the yearly impact.")
+
+pw1, pw2, pw3 = st.columns([2, 1, 1])
+pw_service = pw1.selectbox("Service", list(SERVICES.keys()), key="pw_service")
+old_price = float(SERVICES[pw_service]["price"])
+pw_price = pw2.number_input("New monthly price (USD)", min_value=0.5,
+                            value=round(old_price + 3, 2), step=0.5, key="pw_price")
+pw3.write("")
+pw3.write("")
+if pw3.button("Apply price change"):
+    if abs(pw_price - old_price) < 0.005:
+        st.info("That's the same as the current price.")
+    else:
+        try:
+            plan_id = SERVICES[pw_service]["plan_id"]
+            paypal_api.update_plan_price(plan_id, pw_price)
+
+            SERVICES[pw_service]["price"] = pw_price
+            with open("services.json", "w") as f:
+                json.dump(SERVICES, f, indent=2)
+            db.update_price_for_plan(plan_id, pw_price)
+
+            diff = (pw_price - old_price) * 12
+            detail = (f"{pw_service} price changed ${old_price:.2f} to ${pw_price:.2f}/month "
+                      f"({'+' if diff >= 0 else '-'}${abs(diff):.2f} a year)")
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+            db.add_event(f"PRICE-{plan_id}-{stamp}", "BOUNCER.PRICE_CHANGE", None, detail)
+            alerts.send_alert(f"💸 Price change! {detail}. Open Bouncer to review your options.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Could not change the price: {e}")

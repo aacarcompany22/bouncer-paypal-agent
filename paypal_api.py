@@ -67,3 +67,22 @@ def list_transactions(sub_id):
     )
     r.raise_for_status()
     return r.json().get("transactions", [])  
+def update_plan_price(plan_id, new_price, billing_cycle_sequence=2):
+    """Change the price of a plan's paid (REGULAR) billing cycle. PayPal returns 204 on success."""
+    body = {
+        "pricing_schemes": [
+            {
+                "billing_cycle_sequence": billing_cycle_sequence,
+                "pricing_scheme": {
+                    "fixed_price": {"value": f"{new_price:.2f}", "currency_code": "USD"}
+                },
+            }
+        ]
+    }
+    r = requests.post(
+        f"{BASE}/v1/billing/plans/{plan_id}/update-pricing-schemes",
+        headers=headers(),
+        json=body,
+    )
+    if not r.ok:
+        raise RuntimeError(f"PayPal said {r.status_code}: {r.text}")
