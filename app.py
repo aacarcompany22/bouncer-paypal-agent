@@ -11,6 +11,9 @@ import db
 import paypal_api
 import ui
 import assistant 
+import alerts
+import insights
+from dateutil.relativedelta import relativedelta
 
 st.set_page_config(page_title="Bouncer", page_icon="🛡️", layout="wide")
 db.init_db()
@@ -55,7 +58,16 @@ with st.sidebar:
             st.success("Created. Approve it with your sandbox Personal account.")
         except Exception as e:
             st.error(f"Could not create subscription: {e}")
-
+    st.divider()
+    st.header("🔔 Alerts")
+    current = int(db.get_setting("alert_days", "3"))
+    chosen = st.slider("Warn me this many days before a charge", 1, 7, current)
+    if chosen != current:
+        db.set_setting("alert_days", chosen)
+        st.toast(f"Saved: you'll be warned {chosen} day(s) ahead")
+    if st.button("Send test alert"):
+        alerts.send_alert("🛡️ Bouncer test alert. Your phone is connected!")
+        st.toast("Test alert sent to Discord")
 subs = db.list_subscriptions()
 active = [s for s in subs if s["status"] == "ACTIVE"]
 
@@ -147,7 +159,30 @@ if subs:
                 } for t in txs]))
         except Exception as e:
             st.error(f"Could not load history: {e}")
+# ---------- Billing calendar ----------
+st.divider()
+st.subheader("📅 Billing calendar")
+charges = insights.upcoming_charges(subs)
+if not charges:
+    st.info("Activate a subscription to see its upcoming charges here.")
+else:
+    this_month = datetime.now(timezone.utc).date().replace(day=1)
+    options = [this_month + relativedelta(months=i) for i in range(12)]
+    picked = st.selectbox("Month", options, format_func=lambda d: d.strftime("%B %Y"))
+    components.html(insights.calendar_html(charges, picked.year, picked.month),
+                    height=620, scrolling=True)
 
+    # ---------- Annualised overview ----------
+    st.divider()
+    st.subheader("📊 Annualised cost overview")
+    services = sorted({c["service"] for c in charges})
+    drop = st.multiselect("What if I cancelled...", services)
+    fig, total = insights.annual_figure(charges, excluded=drop)
+    base_total = insights.annual_figure(charges)[1]
+    m1, m2 = st.columns(2)
+    m1.metric("Projected 12-month spend", f"${total:.2f}")
+    m2.metric("Saved by cancelling your selection", f"${base_total - total:.2f}")
+    st.plotly_chart(fig, use_container_width=True)
 # ---------- AI advice ----------
 st.divider()
 st.subheader("🤖 Bouncer AI advice")

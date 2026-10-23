@@ -99,21 +99,22 @@ async def webhook(request: Request):
 
     return {"ok": True}
 def check_trials():
-    """Every minute, warn about subscriptions that are about to start charging."""
-    limit = int(os.getenv("TRIAL_ALERT_DAYS", "3"))
+    """Every minute, send staged reminders before a subscription starts charging."""
+    window = int(db.get_setting("alert_days", os.getenv("TRIAL_ALERT_DAYS", "3")))
+    stages = sorted({x for x in (window, 3, 1) if x <= window})  # e.g. 7 -> 1, 3, 7
     for s in db.list_subscriptions():
         if s["status"] != "ACTIVE" or not s["next_billing_time"]:
             continue
         dt = datetime.fromisoformat(s["next_billing_time"].replace("Z", "+00:00"))
         days = (dt - datetime.now(timezone.utc)).days
-        if days <= limit:
-            # The unique event id means each trial only triggers one alert
-            key = f"TRIAL-{s['sub_id']}-{s['next_billing_time']}"
-            msg = f"{s['service']} starts charging ${s['price']:.2f} in {days} day(s)"
-            if db.add_event(key, "BOUNCER.TRIAL_ENDING", s["sub_id"], msg):
-                alerts.send_alert(
-                    f"🚨 Hold up! {msg}. Open Bouncer to cancel or pause it."
-                )
+        if days < 0 or days > window:
+            continue
+        stage = min(x for x in stages if days <= x)
+        key = f"TRIAL-{s['sub_id']}-{s['next_billing_time']}-{stage}"
+        when = "today" if days == 0 else f"in {days} day(s)"
+        msg = f"{s['service']} will charge ${s['price']:.2f} {when}"
+        if db.add_event(key, "BOUNCER.TRIAL_ENDING", s["sub_id"], msg):
+            alerts.send_alert(f"🚨 Hold up! {msg}. Open Bouncer to pause or cancel it.")
 
 
 scheduler = BackgroundScheduler()
