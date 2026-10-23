@@ -34,6 +34,9 @@ def init_db():
                 received_at TEXT
             )"""
         )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)"
+        )
 
 
 def add_subscription(sub_id, service, plan_id, price, status, approve_url):
@@ -59,6 +62,7 @@ def list_subscriptions():
 
 
 def add_event(event_id, event_type, sub_id, detail):
+    """Returns True if the event was new, False if it was a duplicate."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with connect() as conn:
         cur = conn.execute(
@@ -75,3 +79,16 @@ def list_events(limit=15):
             "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_setting(key, default=None):
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key, value):
+    with connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value))
+        )
