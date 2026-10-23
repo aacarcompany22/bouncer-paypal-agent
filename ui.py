@@ -57,7 +57,7 @@ BOUNCER_TEMPLATE = """
 def bouncer_html(message, alert=False):
     html = BOUNCER_TEMPLATE
     html = html.replace("__MSG__", message)
-    html = html.replace("__COLOR__", "#ff4b4b" if alert else "#2ecc71")
+    html = html.replace("__COLOR__", "#f30909" if alert else "#2ecc71")
     html = html.replace("__STOP__", "block" if alert else "none")
     html = html.replace("__ARMS__", "none" if alert else "block")
     return html
