@@ -10,6 +10,7 @@ import ai
 import db
 import paypal_api
 import ui
+import assistant 
 
 st.set_page_config(page_title="Bouncer", page_icon="🛡️", layout="wide")
 db.init_db()
@@ -202,3 +203,47 @@ def live_events():
 
 
 live_events()
+# ---------- AI financial assistant ----------
+st.divider()
+st.subheader("💬 Ask Bouncer, your AI financial assistant")
+st.caption("General guidance on sandbox demo data, not regulated financial advice. "
+           "Bouncer can only propose changes: nothing happens until you approve.")
+
+if "api_history" not in st.session_state:
+    st.session_state.api_history = []
+    st.session_state.chat_display = []
+    st.session_state.proposals = []
+
+prompt = st.chat_input("e.g. What should I cancel to save the most money?")
+if prompt:
+    st.session_state.chat_display.append(("user", prompt))
+    st.session_state.api_history.append({"role": "user", "content": prompt})
+    with st.spinner("Bouncer is thinking..."):
+        try:
+            reply = assistant.chat(st.session_state.api_history, st.session_state.proposals)
+        except Exception as e:
+            reply = f"Sorry, something went wrong: {e}"
+    st.session_state.chat_display.append(("assistant", reply))
+
+for role, text in st.session_state.chat_display:
+    with st.chat_message(role):
+        st.write(text)
+
+for p in list(st.session_state.proposals):
+    st.warning(f"Bouncer proposes to **{p['action']} {p['service']}**: {p['reason']}")
+    a, b = st.columns(2)
+    if a.button("✅ Approve", key=f"approve_{p['id']}"):
+        try:
+            if p["action"] == "pause":
+                paypal_api.suspend_subscription(p["sub_id"])
+                db.update_subscription(p["sub_id"], "SUSPENDED", None)
+            else:
+                paypal_api.cancel_subscription(p["sub_id"])
+                db.update_subscription(p["sub_id"], "CANCELLED", None)
+            st.session_state.proposals.remove(p)
+            st.rerun()
+        except Exception as e:
+            st.error(f"Could not complete that: {e}")
+    if b.button("✖ Dismiss", key=f"dismiss_{p['id']}"):
+        st.session_state.proposals.remove(p)
+        st.rerun()
