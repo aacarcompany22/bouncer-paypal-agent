@@ -361,3 +361,8 @@
   .pg-hero, [class*="st-key-panel_"], .st-key-panel_subs [data-testid="stHorizontalBlock"],
   .pill.ACTIVE::before { animation: none !important; }
 }
+/* ===== Shared pools card ===== */
+.st-key-card_audit { --ry: 6deg; }
+.st-key-card_price { --ry: 0deg; }
+.st-key-card_pools { --ry: -6deg; --d: .55s; }
+.pill.REVOKED { color: #ff4b4b; background: rgba(255, 75, 75, .14); border-color: rgba(255, 75, 75, .5); }
