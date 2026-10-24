@@ -424,23 +424,28 @@ def sec_pools():
         members = pools.list_members(pool["id"])
         paid = [m for m in members if m["status"] == "PAID"]
         with st.container(border=True):
-            h1, h2 = st.columns([4, 1])
-            h1.markdown(f"**{pool['name']}** &middot; ${pool['total']:.2f}/month &middot; "
+         h1, h2, h3 = st.columns([3, 1.2, 1.7])
+        h1.markdown(f"**{pool['name']}** &middot; ${pool['total']:.2f}/month &middot; "
                         f"shares due {pool['due_date']}")
-            if h2.button("Refresh payments", key=f"psync_{pool['id']}"):
-                try:
-                    pools.sync_pool(pool["id"])
-                except Exception as e:
+        if h2.button("Refresh payments", key=f"psync_{pool['id']}"):
+            try:
+                pools.sync_pool(pool["id"])
+            except Exception as e:
                     st.error(f"Could not refresh: {e}")
+            st.rerun()
+        if h3.button("Demo: pass the deadline", key=f"pdemo_{pool['id']}"):
+                pools.expire_pool(pool["id"])
+                for msg in pools.enforce_deadlines():
+                    alerts.send_alert(f"Access revoked: {msg}")
                 st.rerun()
-            collected = sum(m["share"] for m in paid)
-            st.progress(len(paid) / len(members) if members else 0,
+        collected = sum(m["share"] for m in paid)
+        st.progress(len(paid) / len(members) if members else 0,
                         text=f"{len(paid)} of {len(members)} shares paid "
                              f"(${collected:.2f} collected)")
-            status_class = {"PAID": "ACTIVE", "UNPAID": "APPROVAL_PENDING",
+        status_class = {"PAID": "ACTIVE", "UNPAID": "APPROVAL_PENDING",
                             "NOT_REQUESTED": "APPROVAL_PENDING", "CANCELLED": "CANCELLED"}
-            access_class = {"ACTIVE": "ACTIVE", "PENDING": "APPROVAL_PENDING", "REVOKED": "REVOKED"}
-            for m in members:
+        access_class = {"ACTIVE": "ACTIVE", "PENDING": "APPROVAL_PENDING", "REVOKED": "REVOKED"}
+        for m in members:
                 c1, c2, c3, c4, c5 = st.columns([2, 1, 1.5, 1.5, 2])
                 c1.markdown(f"**{m['name']}**")
                 c1.caption(m["email"])
@@ -457,6 +462,7 @@ def sec_pools():
                         st.rerun()
                     except Exception as e:
                         st.error(f"Could not request: {e}")
+                        live_events(False)
 
 SECTIONS = {
     "subs": ("Subscriptions", sec_subscriptions),

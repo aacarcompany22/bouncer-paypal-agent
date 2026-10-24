@@ -113,15 +113,16 @@ def request_payment(member_id):
 
 
 def sync_member(m):
-    """Check whether the member approved their payment, capture it, and update access."""
+    """Check the member's payment, capture it if approved, and update access.
+    Returns a message when something changed (newly paid, or access restored)."""
     if not m["invoice_id"]:
-        return
+        return None
     r = requests.get(f"{BASE}/v2/checkout/orders/{m['invoice_id']}", headers=headers())
     if not r.ok:
         raise RuntimeError(f"PayPal said {r.status_code}: {r.text}")
     state = r.json().get("status", "")
 
-    if state == "APPROVED":  # the payer has approved, so Bouncer collects the money now
+    if state == "APPROVED":  # the payer approved, so Bouncer collects the money now
         c = requests.post(
             f"{BASE}/v2/checkout/orders/{m['invoice_id']}/capture",
             headers=headers(),
@@ -138,11 +139,80 @@ def sync_member(m):
     else:
         status = "UNPAID"
         access = "REVOKED" if m["access"] == "REVOKED" else "PENDING"
+
+    was_paid = m["status"] == "PAID"
     with db.connect() as conn:
         conn.execute(
             "UPDATE pool_members SET status = ?, access = ? WHERE id = ?", (status, access, m["id"])
         )
+    if status == "PAID" and not was_paid:
+        restored = " Access restored." if m["access"] == "REVOKED" else ""
+        return f"{m['name']} paid their ${m['share']:.2f} share.{restored}"
+    return None
 
 def sync_pool(pool_id):
     for m in list_members(pool_id):
         sync_member(m)
+def get_pool(pool_id):
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM pools WHERE id = ?", (pool_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_member_by_order(order_id):
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM pool_members WHERE invoice_id = ?", (order_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def pool_funded(pool_id):
+    members = list_members(pool_id)
+    return bool(members) and all(m["status"] == "PAID" for m in members)
+
+
+def expire_pool(pool_id):
+    """Demo helper: pretend the deadline was yesterday."""
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    with db.connect() as conn:
+        conn.execute("UPDATE pools SET due_date = ? WHERE id = ?", (yesterday, pool_id))
+
+
+def enforce_deadlines():
+    """Revoke access for unpaid members whose deadline has passed. Returns messages."""
+    today = date.today().isoformat()
+    messages = []
+    for pool in list_pools():
+        for m in list_members(pool["id"]):
+            if m["status"] == "PAID" or not m["invoice_id"] or m["access"] == "REVOKED":
+                continue
+            if today > pool["due_date"]:
+                with db.connect() as conn:
+                    conn.execute("UPDATE pool_members SET access = 'REVOKED' WHERE id = ?", (m["id"],))
+                msg = (f"{m['name']} missed the {pool['name']} deadline. Access to the shared "
+                       f"account is revoked until they pay ${m['share']:.2f}.")
+                db.add_event(f"REVOKE-{m['id']}-{int(time.time())}", "BOUNCER.ACCESS_REVOKED",
+                             pool["sub_id"], msg)
+                messages.append(msg)
+    return messages
+
+
+def due_soon_reminders():
+    """One reminder per unpaid member when their deadline is within a day.
+    Returns (detail, pay_url) pairs."""
+    today = date.today().isoformat()
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    out = []
+    for pool in list_pools():
+        if not (today <= pool["due_date"] <= tomorrow):
+            continue
+        for m in list_members(pool["id"]):
+            if m["status"] == "PAID" or not m["invoice_id"]:
+                continue
+            detail = (f"{m['name']}, your ${m['share']:.2f} share of {pool['name']} "
+                      f"is due {pool['due_date']}.")
+            if db.add_event(f"REMIND-{m['id']}-{pool['due_date']}", "BOUNCER.SHARE_REMINDER",
+                            pool["sub_id"], detail):
+                out.append((detail, m["pay_url"]))
+    return out
