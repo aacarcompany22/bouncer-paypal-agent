@@ -70,7 +70,20 @@ def add_event(event_id, event_type, sub_id, detail):
             "VALUES (?, ?, ?, ?, ?)",
             (event_id, event_type, sub_id, detail, now),
         )
-        return cur.rowcount > 0
+        is_new = cur.rowcount > 0
+        row = conn.execute(
+            "SELECT service FROM subscriptions WHERE sub_id = ?", (sub_id,)
+        ).fetchone()
+    if is_new:
+        try:
+            import search_store
+
+            search_store.index_event(
+                event_id, event_type, sub_id, row["service"] if row else None, detail, now
+            )
+        except Exception as e:
+            print("Elastic indexing skipped:", e)
+    return is_new
 
 
 def list_events(limit=15):
