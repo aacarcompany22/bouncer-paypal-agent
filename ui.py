@@ -232,8 +232,9 @@ def bouncer_html(message, alert=False):
     html = html.replace("__SPEED__", "1.1s" if alert else "3s")
     html = html.replace("__DELAY__", "-1.1s" if alert else "-3s")
     html = html.replace("__BANG__", "block" if alert else "none")
+    html = html.replace(".wrap { display:flex;", ".wrap { justify-content:center; display:flex;")
     return html
-
+  
 RING_COLORS = ["#ffbb00", "#ff0a78", "#8b3dff", "#2ec4ff"]
 
 RINGS_TEMPLATE = """
@@ -658,3 +659,53 @@ def subscription_map_html(subs, budget=50.0):
 
     html = MAP_TEMPLATE.replace("__SVG__", svg).replace("__LEGEND__", legend)
     return html
+  
+SLIDING_TEMPLATE = """
+<style>
+  body { margin:0; background:transparent; font-family:'Segoe UI', system-ui, sans-serif; color:#fff; }
+  .row { display:flex; align-items:center; height:56px; font-size:40px; font-weight:800;
+         line-height:1; font-variant-numeric: tabular-nums; }
+  .cur { color:#00d632; margin-right:3px; text-shadow:0 0 14px rgba(0,214,50,.45); }
+  .col { height:1em; overflow:hidden; }
+  .strip { display:flex; flex-direction:column;
+           transition: transform .75s cubic-bezier(.2,.9,.25,1.05); }
+  .strip span { display:block; height:1em; line-height:1; text-align:center; }
+  .per { margin-left:10px; font-size:13px; font-weight:600; color:#8f9ab8;
+         align-self:flex-end; padding-bottom:10px; }
+  @media (prefers-reduced-motion: reduce) { .strip { transition:none; } }
+</style>
+<div class="row"><span class="cur">$</span>__COLS__<span class="per">per month</span></div>
+<script>
+  requestAnimationFrame(function () { requestAnimationFrame(function () {
+    document.querySelectorAll('.strip').forEach(function (s) {
+      s.style.transform = 'translateY(-' + s.dataset.to + 'em)';
+    });
+  }); });
+</script>
+"""
+
+
+def sliding_number_html(value, prev=0):
+    value = max(int(round(value)), 0)
+    prev = max(int(round(prev)), 0)
+    to_digits = str(value)
+    from_digits = str(prev).zfill(len(to_digits))[-len(to_digits):]
+    cols = ""
+    for f, t in zip(from_digits, to_digits):
+        digits = "".join(f"<span>{d}</span>" for d in range(10))
+        cols += (f"<div class='col'><div class='strip' data-to='{t}' "
+                 f"style='transform:translateY(-{f}em)'>{digits}</div></div>")
+    return SLIDING_TEMPLATE.replace("__COLS__", cols)
+
+def text_roll_html(text):
+    from html import escape
+
+    letters = ""
+    for i, ch in enumerate(text):
+        if ch == " ":
+            letters += "<span class='tr-sp'>&nbsp;</span>"
+            continue
+        c = escape(ch)
+        letters += (f"<span class='tr-l'><span class='tr-in' data-ch='{c}' "
+                    f"style='--i:{i}'>{c}</span></span>")
+    return f"<div class='text-roll'>{letters}</div>"
