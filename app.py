@@ -79,8 +79,14 @@ with st.sidebar:
         st.toast("Test alert sent to Discord")
 
     st.divider()
+    st.caption("Monthly budget")
     saved_budget = float(db.get_setting("budget", "50"))
-    budget = st.number_input("Monthly budget (USD)", min_value=1.0, value=saved_budget, step=5.0)
+    budget = float(st.slider("Monthly budget (USD)", 10, 500,
+                             int(min(max(saved_budget, 10), 500)), step=5,
+                             label_visibility="collapsed", key="budget_slider"))
+    components.html(ui.sliding_number_html(budget, st.session_state.get("budget_prev", 0)),
+                    height=70)
+    st.session_state.budget_prev = budget
     if abs(budget - saved_budget) > 0.001:
         db.set_setting("budget", budget)
 
@@ -668,7 +674,7 @@ def render_cards():
 # ======================= HOME =======================
 def render_banner():
     with st.container(key="banner"):
-        st.title("Bouncer")
+        st.markdown(ui.text_roll_html("Bouncer"), unsafe_allow_html=True)
         st.caption("The bouncer for your PayPal subscriptions. Sandbox mode: no real money moves.")
 
         alert_msg = None

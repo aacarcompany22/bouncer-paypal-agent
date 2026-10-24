@@ -366,3 +366,41 @@
 .st-key-card_price { --ry: 0deg; }
 .st-key-card_pools { --ry: -6deg; --d: .55s; }
 .pill.REVOKED { color: #ff4b4b; background: rgba(255, 75, 75, .14); border-color: rgba(255, 75, 75, .5); }
+
+/* ===== Text roll title ===== */
+.text-roll {
+  display: flex; flex-wrap: wrap;
+  font-size: 3.4rem; font-weight: 800; letter-spacing: -1px;
+  line-height: 1.15; color: #ffffff; cursor: default;
+  text-shadow: 0 0 24px rgba(0, 214, 50, .25);
+}
+.tr-l { position: relative; display: inline-block; overflow: hidden; height: 1.15em; }
+.tr-sp { display: inline-block; width: .3em; }
+.tr-in {
+  position: relative; display: block; height: 1.15em; white-space: pre;
+  animation: tr-roll-load .6s cubic-bezier(.2, .8, .2, 1) calc(var(--i) * .05s);
+}
+.tr-in::after {
+  content: attr(data-ch);
+  position: absolute; left: 0; top: 100%;
+}
+.text-roll:hover .tr-in {
+  animation: tr-roll-hover .5s cubic-bezier(.2, .8, .2, 1) calc(var(--i) * .04s);
+}
+@keyframes tr-roll-load  { from { transform: translateY(0); } to { transform: translateY(-100%); } }
+@keyframes tr-roll-hover { from { transform: translateY(0); } to { transform: translateY(-100%); } }
+@media (prefers-reduced-motion: reduce) { .tr-in { animation: none !important; } }
+/* ===== Fix: balanced spacing ===== */
+[data-testid="stMainBlockContainer"], .block-container {
+  padding-top: 3.5rem !important;
+  padding-left: 2.5rem !important;
+  padding-right: 2.5rem !important;
+  padding-bottom: 3rem !important;
+}
+[data-testid="stSidebarUserContent"] { padding-top: 1rem !important; }
+
+.st-key-banner { padding: 1rem 1.5rem 0.5rem; margin-bottom: 1.2rem; }
+.st-key-banner .text-roll { justify-content: center; font-size: 3rem; }
+.st-key-banner [data-testid="stCaptionContainer"],
+.st-key-banner [data-testid="stCaptionContainer"] p { text-align: center; }
+.st-key-banner .stButton { display: flex; justify-content: center; }
