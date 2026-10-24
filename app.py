@@ -15,9 +15,11 @@ import alerts
 import insights
 from dateutil.relativedelta import relativedelta
 import search_store
+import pools
 
 st.set_page_config(page_title="Bouncer",  layout="wide")
 db.init_db()
+pools.init()
 with open("style.css") as css_file:
     st.markdown(f"<style>{css_file.read()}</style>", unsafe_allow_html=True)
     st.markdown("<style>@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');</style>",
@@ -368,7 +370,87 @@ def sec_price():
             except Exception as e:
                 st.error(f"Could not change the price: {e}")
 
+def sec_pools():
+    st.caption("Split a subscription with friends. Bouncer requests each share as a PayPal invoice "
+               "and tracks who has paid.")
+    candidates = [s for s in subs if s["status"] != "CANCELLED"]
+    existing = pools.list_pools()
 
+    with st.expander("Create a pool", expanded=not existing):
+        if not candidates:
+            st.info("Add a subscription first.")
+        else:
+            labels = {f"{s['service']} (${s['price']:.2f}/month, {s['sub_id']})": s for s in candidates}
+            pick = st.selectbox("Subscription to share", list(labels.keys()), key="pool_sub")
+            pool_name = st.text_input("Pool name", value="Family plan", key="pool_name")
+            people_text = st.text_area(
+                "Members, one per line as: Name, email",
+                placeholder="Sam, sb-xxxx@personal.example.com",
+                key="pool_people",
+            )
+            due_days = st.number_input("Shares due in (days)", min_value=1, max_value=30, value=3,
+                                       key="pool_days")
+            if st.button("Create pool and request shares", key="pool_create"):
+                people = []
+                for line in people_text.splitlines():
+                    parts = [p.strip() for p in line.split(",")]
+                    if len(parts) >= 2 and "@" in parts[1]:
+                        people.append((parts[0], parts[1]))
+                if not people:
+                    st.error("Add at least one member as: Name, email")
+                else:
+                    sub = labels[pick]
+                    pool_id = pools.create_pool(sub["sub_id"], pool_name, sub["price"],
+                                                int(due_days), people)
+                    for m in pools.list_members(pool_id):
+                        try:
+                            url = pools.request_payment(m["id"])
+                            alerts.send_alert(f"Pool '{pool_name}': {m['name']}, please pay your "
+                                              f"${m['share']:.2f} share here: {url}")
+                        except Exception as e:
+                            st.error(f"Could not request {m['name']}'s share: {e}")
+                    st.rerun()
+
+    if not existing:
+        st.info("No pools yet.")
+
+    for pool in existing:
+        members = pools.list_members(pool["id"])
+        paid = [m for m in members if m["status"] == "PAID"]
+        with st.container(border=True):
+            h1, h2 = st.columns([4, 1])
+            h1.markdown(f"**{pool['name']}** &middot; ${pool['total']:.2f}/month &middot; "
+                        f"shares due {pool['due_date']}")
+            if h2.button("Refresh payments", key=f"psync_{pool['id']}"):
+                try:
+                    pools.sync_pool(pool["id"])
+                except Exception as e:
+                    st.error(f"Could not refresh: {e}")
+                st.rerun()
+            collected = sum(m["share"] for m in paid)
+            st.progress(len(paid) / len(members) if members else 0,
+                        text=f"{len(paid)} of {len(members)} shares paid "
+                             f"(${collected:.2f} collected)")
+            status_class = {"PAID": "ACTIVE", "UNPAID": "APPROVAL_PENDING",
+                            "NOT_REQUESTED": "APPROVAL_PENDING", "CANCELLED": "CANCELLED"}
+            access_class = {"ACTIVE": "ACTIVE", "PENDING": "APPROVAL_PENDING", "REVOKED": "REVOKED"}
+            for m in members:
+                c1, c2, c3, c4, c5 = st.columns([2, 1, 1.5, 1.5, 2])
+                c1.markdown(f"**{m['name']}**")
+                c1.caption(m["email"])
+                c2.write(f"${m['share']:.2f}")
+                c3.markdown(f"<span class='pill {status_class.get(m['status'], 'CANCELLED')}'>"
+                            f"{m['status'].replace('_', ' ')}</span>", unsafe_allow_html=True)
+                c4.markdown(f"<span class='pill {access_class.get(m['access'], 'CANCELLED')}'>"
+                            f"ACCESS {m['access']}</span>", unsafe_allow_html=True)
+                if m["pay_url"]:
+                    c5.link_button("Open pay link", m["pay_url"])
+                elif c5.button("Request share", key=f"preq_{m['id']}"):
+                    try:
+                        pools.request_payment(m["id"])
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Could not request: {e}")
 
 SECTIONS = {
     "subs": ("Subscriptions", sec_subscriptions),
@@ -376,6 +458,7 @@ SECTIONS = {
     "ai": ("AI assistant and advice", sec_ai),
     "audit": ("Audit log and events", sec_audit),
     "price": ("Price watch", sec_price),
+    "pools": ("Shared pools", sec_pools)
 }
 
 CARD_TEXT = {
@@ -384,6 +467,7 @@ CARD_TEXT = {
     "ai": ("AI assistant", "Ask Bouncer for savings ideas and approve its suggestions."),
     "audit": ("Audit log", "Search every PayPal event, live."),
     "price": ("Price watch", "Simulate a price rise and get alerted."),
+    "pools": ("Shared pools", "Split a subscription and collect shares through PayPal."),
 }
 
 
@@ -492,6 +576,24 @@ SPRITE_COIN = [
     ".....kkkkkk.....",
     "................",
 ]
+SPRITE_POOL = [
+    "................",
+    ".....kkkkkk.....",
+    ".....kssssk.....",
+    ".....kssssk.....",
+    "kkkk.kkkkkk.kkkk",
+    "kssk.kbbbbk.kssk",
+    "kssk.kbbbbk.kssk",
+    "kkkk.kbbbbk.kkkk",
+    "kbbk.kbbbbk.kbbk",
+    "kbbk.kbbbbk.kbbk",
+    "kkkk.kbbbbk.kkkk",
+    "....kbbbbbbk....",
+    "....kbbyybbk....",
+    "....kbbbbbbk....",
+    "....kkkkkkkk....",
+    "................",
+]
 
 
 def _pixels(rows, anim="bob"):
@@ -516,6 +618,7 @@ ICONS = {
     "ai": _pixels(SPRITE_ROBOT),
     "audit": _pixels(SPRITE_MAGNIFIER, "sweep"),
     "price": _pixels(SPRITE_COIN),
+    "pools": _pixels(SPRITE_POOL),
 }
 
 
@@ -529,6 +632,8 @@ def card_stat(key):
         return "AI", "ask Bouncer anything"
     if key == "audit":
         return str(len(db.list_events(500))), "events logged"
+    if key == "pools":
+        return str(len(pools.list_pools())), "pools running"
     return str(len(SERVICES)), "plans watched"
 
 
@@ -536,8 +641,9 @@ def render_cards():
     st.markdown("### Explore")
     layout = [
         [("calendar", 1), ("subs", 1), ("ai", 1)],
-        [(None, 0.5), ("audit", 1), ("price", 1), (None, 0.5)],
+        [("audit", 1), ("price", 1), ("pools", 1)],
     ]
+
     for row in layout:
         cols = st.columns([w for _k, w in row])
         for col, (key, _w) in zip(cols, row):
