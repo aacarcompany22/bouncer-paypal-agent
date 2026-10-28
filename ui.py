@@ -1183,3 +1183,115 @@ def show_grid(df, key, height=340, status_col=None, money_cols=(), selectable=Fa
     if hasattr(rows, "to_dict"):  # newer versions return a DataFrame
         rows = rows.to_dict("records")
     return list(rows)
+  
+STATUS_PILL = JsCode("""
+function(params) {
+  var map = {
+    'ACTIVE': ['#2ecc71', 'rgba(46,204,113,.16)', 'ACTIVE'],
+    'APPROVAL_PENDING': ['#f5a623', 'rgba(245,166,35,.16)', 'PENDING'],
+    'SUSPENDED': ['#4da3ff', 'rgba(77,163,255,.16)', 'PAUSED'],
+    'CANCELLED': ['#8a90a2', 'rgba(138,144,162,.16)', 'CANCELLED']
+  };
+  var m = map[params.value] || ['#cfd6e8', 'rgba(207,214,232,.12)', params.value];
+  return '<span style="display:inline-block;padding:2px 10px;border-radius:999px;' +
+         'font-size:11px;font-weight:700;letter-spacing:.4px;color:' + m[0] +
+         ';background:' + m[1] + ';border:1px solid ' + m[0] + '">' + m[2] + '</span>';
+}
+""")
+
+BUDGET_BAR = JsCode("""
+function(params) {
+  var v = Number(params.value);
+  if (!v) { return '<span style="color:#6b7490">-</span>'; }
+  var w = Math.min(v, 100);
+  var c = v <= 25 ? '#2ecc71' : (v <= 50 ? '#f5a623' : '#ff4b4b');
+  return '<div style="display:flex;align-items:center;gap:8px;height:100%">' +
+    '<div style="flex:1;height:8px;border-radius:4px;background:#232a40">' +
+    '<div style="width:' + w + '%;height:8px;border-radius:4px;background:' + c + '"></div></div>' +
+    '<span style="font-size:11px;color:#9aa4bf;min-width:34px;text-align:right">' +
+    v.toFixed(0) + '%</span></div>';
+}
+""")
+
+
+def days_renderer(limit):
+    return JsCode("""
+function(params) {
+  var d = Number(params.value);
+  if (isNaN(d) || d < 0) { return '<span style="color:#6b7490">-</span>'; }
+  var hot = d <= __LIMIT__;
+  var label = d === 0 ? 'today' : d + (d === 1 ? ' day' : ' days');
+  return '<span style="font-weight:' + (hot ? '800' : '500') + ';color:' +
+         (hot ? '#ff6b6b' : '#cfd6e8') + '">' + label + '</span>';
+}
+""".replace("__LIMIT__", str(int(limit))))
+
+
+def due_row_style(limit):
+    return JsCode("""
+function(params) {
+  var d = Number(params.data['Days left']);
+  if (params.data['Status'] === 'ACTIVE' && d >= 0 && d <= __LIMIT__) {
+    return {background: 'rgba(255,75,75,.10)', borderLeft: '3px solid #ff4b4b'};
+  }
+  return null;
+}
+""".replace("__LIMIT__", str(int(limit))))
+
+
+def show_grid(df, key, height=340, status_col=None, money_cols=(), selectable=False,
+              renderers=None, row_style=None, search=False):
+    import streamlit as st
+    from st_aggrid import GridUpdateMode
+
+    query = ""
+    if search:
+        query = st.text_input("Quick search", key=f"{key}_search",
+                              placeholder="Search every column, then press Enter",
+                              label_visibility="collapsed")
+
+    gb = GridOptionsBuilder.from_dataframe(df)
+    gb.configure_default_column(resizable=True, sortable=True, filter=True, flex=1, minWidth=110)
+    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=8)
+    if status_col and status_col in df.columns:
+        gb.configure_column(status_col, cellStyle=STATUS_STYLE)
+    for col in money_cols:
+        if col in df.columns:
+            gb.configure_column(col, valueFormatter=MONEY_FORMAT)
+    for col, code in (renderers or {}).items():
+        if col in df.columns:
+            gb.configure_column(col, cellRenderer=code)
+    if selectable:
+        gb.configure_selection("single", use_checkbox=True)
+
+    extra = {}
+    if row_style is not None:
+        extra["getRowStyle"] = row_style
+    if search and query:
+        extra["quickFilterText"] = query
+    if extra:
+        gb.configure_grid_options(**extra)
+
+    options = dict(
+        gridOptions=gb.build(),
+        height=height,
+        theme="streamlit",
+        allow_unsafe_jscode=True,
+        fit_columns_on_grid_load=True,
+        key=key,
+    )
+    if selectable:
+        options["update_mode"] = GridUpdateMode.SELECTION_CHANGED
+    grid = AgGrid(df, **options)
+
+    if not selectable:
+        return []
+    try:
+        rows = grid["selected_rows"]
+    except Exception:
+        rows = getattr(grid, "selected_rows", None)
+    if rows is None:
+        return []
+    if hasattr(rows, "to_dict"):
+        rows = rows.to_dict("records")
+    return list(rows)
