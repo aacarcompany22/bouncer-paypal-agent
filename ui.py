@@ -709,3 +709,477 @@ def text_roll_html(text):
         letters += (f"<span class='tr-l'><span class='tr-in' data-ch='{c}' "
                     f"style='--i:{i}'>{c}</span></span>")
     return f"<div class='text-roll'>{letters}</div>"
+  
+_TRASH_COLORS = {"k": "#0b0f19", "s": "#cfd6e8", "S": "#8f9ab8", "r": "#ff4b4b"}
+_TRASH_LID = [
+    "......kkkk......",
+    "......kssk......",
+    ".kkkkkkkkkkkkkk.",
+    ".kSSSSSSSSSSSSk.",
+    ".kkkkkkkkkkkkkk.",
+]
+_TRASH_BODY = [
+    "..kkkkkkkkkkkk..",
+    "..kssSssSssSsk..",
+    "..kssSssSssSsk..",
+    "..kssSssSssSsk..",
+    "..kssrrrrrrssk..",
+    "..kssSssSssSsk..",
+    "..kssSssSssSsk..",
+    "..kssSssSssSsk..",
+    "..kssSssSssSsk..",
+    "..kkkkkkkkkkkk..",
+]
+
+
+def _trash_svg():
+    def rects(rows, y0):
+        out = ""
+        for y, row in enumerate(rows):
+            for x, ch in enumerate(row):
+                if ch != ".":
+                    out += (f"<rect x='{x}' y='{y + y0}' width='1.02' height='1.02' "
+                            f"fill='{_TRASH_COLORS[ch]}'/>")
+        return out
+
+    return ("<svg class='pixt' viewBox='0 0 16 16' shape-rendering='crispEdges'>"
+            f"<g class='body'>{rects(_TRASH_BODY, 5)}</g>"
+            f"<g class='lid'>{rects(_TRASH_LID, 0)}</g></svg>")
+
+
+KILL_BLOCK = r"""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+  #trash { position:absolute; right:12px; bottom:44px; width:132px; text-align:center;
+           user-select:none; transition: transform .2s ease; animation: idle 2.6s steps(4) infinite; }
+  #trash .pixt { width:96px; height:96px; display:block; margin:0 auto; overflow:visible;
+                 image-rendering:pixelated; filter:drop-shadow(0 0 4px rgba(255,75,75,.15));
+                 transition: filter .2s ease; }
+  #trash .lid { transform-box: fill-box; transform-origin: 0% 100%;
+                transition: transform .25s cubic-bezier(.3,1.6,.5,1); }
+  #trash.ready { transform: scale(1.08); }
+  #trash.ready .pixt { filter:drop-shadow(0 0 10px rgba(255,75,75,.6)); }
+  #trash.over { transform: scale(1.2); }
+  #trash.over .pixt { filter:drop-shadow(0 0 18px rgba(255,75,75,1)); }
+  #trash.over .lid { transform: translate(-1px,-4px) rotate(-30deg); }
+  #trash.dropped { animation: slam .5s steps(5); }
+  #trash .cap { font-family:'Press Start 2P', monospace; font-size:8px; line-height:1.7;
+                color:#ff4b4b; margin-top:6px; text-shadow:2px 2px 0 #0b0f19; }
+  @keyframes idle { 50% { transform: translateY(-3px); } }
+  @keyframes slam { 30% { transform: translateY(5px) scale(1.15); } 100% { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { #trash { animation:none; } }
+</style>
+<div id="trash">__TRASH__<div class="cap" id="trashCap">KILL SWITCH<br>drag a sub in</div></div>
+<script>
+(function () {
+  var svg = document.querySelector('svg');
+  var trash = document.getElementById('trash');
+  var cap = document.getElementById('trashCap');
+  var drag = null;
+
+  function toSvg(e) {
+    var pt = svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+  function overTrash(e) {
+    var r = trash.getBoundingClientRect();
+    return e.clientX >= r.left - 12 && e.clientX <= r.right + 12 &&
+           e.clientY >= r.top - 12 && e.clientY <= r.bottom + 12;
+  }
+  function arm(id) {
+    try {
+      var btns = window.parent.document.querySelectorAll('button');
+      for (var i = 0; i < btns.length; i++) {
+        if (btns[i].textContent.trim() === 'kill-' + id) { btns[i].click(); return true; }
+      }
+    } catch (err) {}
+    return false;
+  }
+  function glide(node, from, to) {
+    var t0 = null;
+    function step(t) {
+      if (t0 === null) t0 = t;
+      var k = Math.min((t - t0) / 280, 1), e = 1 - Math.pow(1 - k, 3);
+      node.setAttribute('transform', 'translate(' + (from.x + (to.x - from.x) * e) + ',' +
+                        (from.y + (to.y - from.y) * e) + ')');
+      if (k < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  document.querySelectorAll('g.node').forEach(function (node) {
+    var title = node.querySelector('title');
+    if (!title) return;
+    var lines = title.textContent.split('\n').map(function (s) { return s.trim(); });
+    var id = lines.filter(function (l) { return /^I-[A-Z0-9]+$/.test(l); })[0];
+    var live = lines.indexOf('ACTIVE') > -1 || lines.indexOf('SUSPENDED') > -1;
+    if (!id || !live) return;
+    var m = /translate\(([-\d.]+),\s*([-\d.]+)\)/.exec(node.getAttribute('transform'));
+    if (!m) return;
+    var home = { x: parseFloat(m[1]), y: parseFloat(m[2]) };
+    node.style.cursor = 'grab';
+    node.style.touchAction = 'none';
+
+    node.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      node.setPointerCapture(e.pointerId);
+      var p = toSvg(e);
+      drag = { dx: p.x - home.x, dy: p.y - home.y, cur: { x: home.x, y: home.y } };
+      node.style.cursor = 'grabbing';
+      trash.classList.add('ready');
+    });
+    node.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var p = toSvg(e);
+      drag.cur = { x: p.x - drag.dx, y: p.y - drag.dy };
+      node.setAttribute('transform', 'translate(' + drag.cur.x + ',' + drag.cur.y + ')');
+      trash.classList.toggle('over', overTrash(e));
+    });
+    function finish(e, allowDrop) {
+      if (!drag) return;
+      var hit = allowDrop && overTrash(e), cur = drag.cur;
+      drag = null;
+      node.style.cursor = 'grab';
+      trash.classList.remove('ready', 'over');
+      if (hit) {
+        node.style.transition = 'opacity .25s';
+        node.style.opacity = '0';
+        node.style.pointerEvents = 'none';
+        trash.classList.add('dropped');
+        if (arm(id)) {
+          cap.innerHTML = 'ARMED<br>confirm above';
+        } else {
+          cap.innerHTML = 'use the button<br>in Subscriptions';
+          node.style.opacity = '1';
+          node.style.pointerEvents = 'auto';
+          glide(node, cur, home);
+        }
+      } else {
+        glide(node, cur, home);
+      }
+    }
+    node.addEventListener('pointerup', function (e) { finish(e, true); });
+    node.addEventListener('pointercancel', function (e) { finish(e, false); });
+  });
+})();
+</script>
+"""
+
+
+def kill_map_html(subs, budget=50.0, nonce=0):
+    # the nonce changes the page when a kill is aborted or done, so the map reloads fresh
+    return (subscription_map_html(subs, budget)
+            + KILL_BLOCK.replace("__TRASH__", _trash_svg())
+            + f"<!-- {nonce} -->")
+def kill_trash_html():
+    return ("<div id='bouncer-trash'>" + _trash_svg() +
+            "<div class='cap' id='bouncer-trash-cap'>KILL SWITCH<br>drag a sub in</div></div>")
+
+
+KILL_BLOCK_V2 = r"""
+<script>
+(function () {
+  var P, frame;
+  try { P = window.parent.document; frame = window.frameElement; } catch (err) { return; }
+  var svg = document.querySelector('svg');
+  if (!P || !frame || !svg) return;
+  var drag = null;
+
+  function trashEl() { return P.getElementById('bouncer-trash'); }
+  function capEl() { return P.getElementById('bouncer-trash-cap'); }
+  function at(e, fromParent) {
+    if (fromParent) return { x: e.clientX, y: e.clientY };
+    var r = frame.getBoundingClientRect();
+    return { x: e.clientX + r.left, y: e.clientY + r.top };
+  }
+  function overTrash(pt) {
+    var t = trashEl();
+    if (!t) return false;
+    var r = t.getBoundingClientRect();
+    return pt.x >= r.left - 16 && pt.x <= r.right + 16 &&
+           pt.y >= r.top - 16 && pt.y <= r.bottom + 16;
+  }
+  function arm(id) {
+    try {
+      var btns = P.querySelectorAll('button');
+      for (var i = 0; i < btns.length; i++) {
+        if (btns[i].textContent.trim() === 'kill-' + id) { btns[i].click(); return true; }
+      }
+    } catch (err) {}
+    return false;
+  }
+  function makeGhost(node) {
+    var c = node.querySelector('circle');
+    var scale = svg.getScreenCTM().a;
+    var d = c ? parseFloat(c.getAttribute('r')) * 2 * scale : 36;
+    var g = P.createElement('div');
+    g.style.cssText = 'position:fixed;z-index:2147483000;pointer-events:none;border-radius:50%;' +
+      'width:' + d + 'px;height:' + d + 'px;transform:translate(-50%,-50%);' +
+      'background:' + (c ? c.getAttribute('fill') : '#ffbb00') + ';' +
+      'border:2px solid rgba(255,255,255,.7);box-shadow:0 0 18px rgba(255,255,255,.35);opacity:.95;';
+    P.body.appendChild(g);
+    return g;
+  }
+  function place(g, pt) { g.style.left = pt.x + 'px'; g.style.top = pt.y + 'px'; }
+
+  function onMove(fromParent) {
+    return function (e) {
+      if (!drag) return;
+      var pt = at(e, fromParent);
+      place(drag.ghost, pt);
+      var t = trashEl();
+      if (t) t.classList.toggle('over', overTrash(pt));
+    };
+  }
+  function onEnd(fromParent, allow) {
+    return function (e) {
+      if (!drag) return;
+      var pt = at(e, fromParent);
+      var hit = allow && overTrash(pt);
+      var d = drag; drag = null;
+      detach();
+      P.body.style.userSelect = '';
+      if (d.ghost.parentNode) d.ghost.parentNode.removeChild(d.ghost);
+      var t = trashEl(), cap = capEl();
+      if (t) t.classList.remove('ready', 'over');
+      if (hit) {
+        if (t) {
+          t.classList.add('dropped');
+          setTimeout(function () { t.classList.remove('dropped'); }, 600);
+        }
+        if (arm(d.id)) {
+          d.node.style.opacity = '0';
+          d.node.style.pointerEvents = 'none';
+          if (cap) cap.innerHTML = 'ARMED<br>confirm above';
+        } else {
+          d.node.style.opacity = '1';
+          if (cap) cap.innerHTML = 'use the button<br>in Subscriptions';
+        }
+      } else {
+        d.node.style.opacity = '1';
+      }
+    };
+  }
+  var handlers = [
+    [document, 'pointermove', onMove(false)], [P, 'pointermove', onMove(true)],
+    [document, 'pointerup', onEnd(false, true)], [P, 'pointerup', onEnd(true, true)],
+    [document, 'pointercancel', onEnd(false, false)], [P, 'pointercancel', onEnd(true, false)]
+  ];
+  function attach() { handlers.forEach(function (h) { h[0].addEventListener(h[1], h[2]); }); }
+  function detach() { handlers.forEach(function (h) { h[0].removeEventListener(h[1], h[2]); }); }
+
+  document.querySelectorAll('g.node').forEach(function (node) {
+    var title = node.querySelector('title');
+    if (!title) return;
+    var lines = title.textContent.split('\n').map(function (s) { return s.trim(); });
+    var id = lines.filter(function (l) { return /^I-[A-Z0-9]+$/.test(l); })[0];
+    var live = lines.indexOf('ACTIVE') > -1 || lines.indexOf('SUSPENDED') > -1;
+    if (!id || !live) return;
+    node.style.cursor = 'grab';
+    node.style.touchAction = 'none';
+    node.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      drag = { node: node, id: id, ghost: makeGhost(node) };
+      place(drag.ghost, at(e, false));
+      node.style.opacity = '.25';
+      P.body.style.userSelect = 'none';
+      var t = trashEl();
+      if (t) t.classList.add('ready');
+      attach();
+    });
+  });
+})();
+</script>
+"""
+
+
+def kill_map_html(subs, budget=50.0, nonce=0):
+    # the nonce changes when a kill is aborted or done, so the map reloads fresh
+    return subscription_map_html(subs, budget) + KILL_BLOCK_V2 + f"<!-- {nonce} -->"
+
+GUARD_PIXELS = [
+    "................",
+    ".....kkkkkk.....",
+    "....khwhhhhk....",
+    "....khhhhhhk....",
+    "....kggggggk....",
+    "....kgwggwgke...",
+    "....khhhhhhk....",
+    "....khhHHhhk....",
+    "....khhhhhhk....",
+    ".....kkkkkk.....",
+    "......khhk......",
+    ".kkkkkkttkkkkkk.",
+    ".kuuuktrrtkuuuk.",
+    ".kuuuktrrtkuuuk.",
+    ".kuuukkrrkkuuuk.",
+    ".kUUUUUUUUUUUUk.",
+    ".kyhUUUUUUUUhyk.",
+    ".kkkkkkkkkkkkkk.",
+    ".kuuuuuuuuuuuuk.",
+    ".kuuuuuuuuuuuuk.",
+    "..kkkkkkkkkkkk..",
+    "..kdddk..kdddk..",
+    "..kdddk..kdddk..",
+    ".kbbbbk..kbbbbk.",
+    ".kkkkkk..kkkkkk.",
+]
+GUARD_COLORS = {
+    "k": "#02030a", "h": "#f2b48c", "H": "#b8714c", "w": "#ffffff",
+    "g": "#0a0c14", "t": "#ffffff", "r": "#e0483a", "u": "#262c3d",
+    "U": "#3b4663", "d": "#161a26", "y": "#ffbb00", "b": "#07080c",
+}
+BANG_PIXELS = [
+    "..rrr..",
+    ".rrwrr.",
+    "rrrwrrr",
+    "rrrwrrr",
+    "rrrrrrr",
+    ".rrwrr.",
+    "..rrr..",
+]
+VIP_GLYPHS = {
+    "V": ["k.k", "k.k", "k.k", "k.k", ".k."],
+    "I": ["kkk", ".k.", ".k.", ".k.", "kkk"],
+    "P": ["kkk", "k.k", "kkk", "k..", "k.."],
+}
+
+
+def _px(rows, colors, u=1, x0=0, y0=0):
+    out = []
+    for y, row in enumerate(rows):
+        for x, ch in enumerate(row):
+            if ch != "." and ch in colors:
+                out.append(f'<rect x="{x0 + x * u}" y="{y0 + y * u}" width="{u * 1.02}" '
+                           f'height="{u * 1.02}" fill="{colors[ch]}"/>')
+    return "".join(out)
+
+
+def _guard(color, alert):
+    colors = dict(GUARD_COLORS, e=color)
+    sprite = f'<g transform="scale(5)">{_px(GUARD_PIXELS, colors)}</g>'
+    bang = ""
+    if alert:
+        badge = _px(BANG_PIXELS, {"r": "#ff4b4b", "w": "#ffffff"})
+        bang = (f'<g class="hop"><g transform="translate(22.5,-42) scale(5)">{badge}</g></g>')
+    return sprite + bang
+
+
+def _pixel_scene(color, alert):
+    x0, y0 = 175, 30
+
+    shadow = '<rect x="40" y="235" width="355" height="5" fill="#000" opacity=".35"/>'
+
+    carpet = ""
+    for i in range(19):
+        k = min(i // 6, 2)
+        w, x, y = 85 + 20 * k, 175 - 10 * k, 140 + 5 * i
+        carpet += f'<rect x="{x}" y="{y}" width="{w}" height="5" fill="#33447a"/>'
+        carpet += (f'<rect x="{x}" y="{y}" width="5" height="5" fill="#d4af37"/>'
+                   f'<rect x="{x + w - 5}" y="{y}" width="5" height="5" fill="#d4af37"/>')
+
+    door = (
+        f'<rect x="{x0}" y="{y0}" width="85" height="110" fill="#d4af37"/>'
+        f'<rect x="{x0 + 5}" y="{y0 + 5}" width="75" height="100" fill="#1f2a55"/>'
+        f'<rect x="{x0 + 5}" y="{y0 + 5}" width="75" height="5" fill="#2b3a74"/>'
+        f'<rect x="{x0 + 10}" y="{y0 + 55}" width="65" height="5" fill="#2b3a74"/>'
+        f'<rect x="{x0 + 65}" y="{y0 + 65}" width="5" height="15" fill="#d4af37"/>'
+        f'<rect x="{x0 + 10}" y="{y0 + 10}" width="65" height="35" fill="#f3c63a"/>'
+    )
+    for n, ch in enumerate("VIP"):
+        door += _px(VIP_GLYPHS[ch], {"k": "#2a2108"}, u=5, x0=x0 + 15 + n * 20, y0=y0 + 15)
+
+    lamp = (f'<rect x="210" y="5" width="15" height="15" fill="#10152a"/>'
+            f'<rect x="215" y="10" width="5" height="5" fill="{color}"/>')
+
+    guard = _guard(color, alert)
+    left = (f'<g transform="translate(45,110)"><g class="mv"><g class="bob">{guard}</g></g></g>')
+    right = (f'<g transform="translate(390,110) scale(-1,1)"><g class="mv r"><g class="bob">'
+             f'{guard}</g></g></g>')
+
+    posts = ""
+    for px in (155, 280):
+        posts += (f'<rect x="{px}" y="170" width="5" height="65" fill="#d4af37"/>'
+                  f'<rect x="{px - 5}" y="165" width="15" height="5" fill="#f3c63a"/>')
+    rope = ""
+    for j in range(24):
+        t = (j - 11.5) / 11.5
+        sag = round(12 * (1 - t * t) / 5) * 5
+        rope += f'<rect x="{160 + 5 * j}" y="{178 + sag}" width="5" height="5" fill="#c0392b"/>'
+
+    return (f'<svg viewBox="0 0 435 250" width="435" height="250" shape-rendering="crispEdges" '
+            f'xmlns="http://www.w3.org/2000/svg">{shadow}{carpet}{door}{lamp}{left}{right}'
+            f'{posts}{rope}</svg>')
+
+
+PIXEL_SCENE_TEMPLATE = """
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+  body { margin:0; background:transparent; }
+  .wrap { display:flex; align-items:center; justify-content:center; gap:26px; flex-wrap:wrap; }
+  svg { display:block; image-rendering:pixelated; }
+  .bubble { font-family:'Press Start 2P', monospace; font-size:11px; line-height:1.9;
+            color:#ffffff; max-width:360px; padding:16px 18px; background:#141a2b;
+            border:3px solid __COLOR__; box-shadow:4px 4px 0 #05070d; }
+  .mv  { animation: patrol __DUR__ steps(4) infinite alternate; }
+  .mv.r { animation-delay: -__DUR__; }
+  .bob { animation: bob __BOB__ steps(1) infinite alternate; }
+  .hop { animation: bob __BOB__ steps(1) infinite alternate; }
+  @keyframes patrol { from { transform: translateX(-10px); } to { transform: translateX(10px); } }
+  @keyframes bob { from { transform: translateY(0); } to { transform: translateY(-5px); } }
+  @media (prefers-reduced-motion: reduce) { .mv, .bob, .hop { animation:none; } }
+</style>
+<div class="wrap">__SVG__<div class="bubble">__MSG__</div></div>
+"""
+
+
+def bouncer_html(message, alert=False):
+    from html import escape
+
+    color = "#ff4b4b" if alert else "#2ecc71"
+    html = PIXEL_SCENE_TEMPLATE
+    html = html.replace("__SVG__", _pixel_scene(color, alert))
+    html = html.replace("__MSG__", escape(message))
+    html = html.replace("__COLOR__", color)
+    html = html.replace("__DUR__", "1.2s" if alert else "3.2s")
+    html = html.replace("__BOB__", ".3s" if alert else ".6s")
+    return html
+  
+def show_grid(df, key, height=340, status_col=None, money_cols=(), selectable=False):
+    from st_aggrid import GridUpdateMode
+
+    gb = GridOptionsBuilder.from_dataframe(df)
+    gb.configure_default_column(resizable=True, sortable=True, filter=True, flex=1, minWidth=110)
+    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=8)
+    if status_col and status_col in df.columns:
+        gb.configure_column(status_col, cellStyle=STATUS_STYLE)
+    for col in money_cols:
+        if col in df.columns:
+            gb.configure_column(col, valueFormatter=MONEY_FORMAT)
+    if selectable:
+        gb.configure_selection("single", use_checkbox=True)
+
+    options = dict(
+        gridOptions=gb.build(),
+        height=height,
+        theme="streamlit",
+        allow_unsafe_jscode=True,
+        fit_columns_on_grid_load=True,
+        key=key,
+    )
+    if selectable:
+        options["update_mode"] = GridUpdateMode.SELECTION_CHANGED
+    grid = AgGrid(df, **options)
+
+    if not selectable:
+        return []
+    try:
+        rows = grid["selected_rows"]
+    except Exception:
+        rows = getattr(grid, "selected_rows", None)
+    if rows is None:
+        return []
+    if hasattr(rows, "to_dict"):  # newer versions return a DataFrame
+        rows = rows.to_dict("records")
+    return list(rows)

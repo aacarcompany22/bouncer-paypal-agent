@@ -86,6 +86,8 @@ with st.sidebar:
                              label_visibility="collapsed", key="budget_slider"))
     components.html(ui.sliding_number_html(budget, st.session_state.get("budget_prev", 0)),
                     height=70)
+    if st.session_state.get("page", "home") == "home":
+        st.markdown(ui.kill_trash_html(), unsafe_allow_html=True)
     st.session_state.budget_prev = budget
     if abs(budget - saved_budget) > 0.001:
         db.set_setting("budget", budget)
@@ -117,7 +119,38 @@ def live_events(show_table=True):
             "Detail": e["detail"],
         } for e in events]))
 
-
+def render_ledger_actions():
+    sub_id = st.session_state.get("ledger_pick")
+    sub = next((s for s in subs if s["sub_id"] == sub_id), None)
+    if not sub:
+        st.caption("Tick a row in the ledger to act on it.")
+        return
+    with st.container(key="ledger_actions"):
+        st.markdown(f"**Selected:** {sub['service']} &middot; ${sub['price']:.2f}/month "
+                    f"&middot; {sub['status'].replace('_', ' ')}")
+        if sub["status"] not in ("ACTIVE", "SUSPENDED"):
+            st.caption("This subscription can't be changed right now.")
+        c1, c2, c3 = st.columns([1, 1, 1])
+        if sub["status"] == "ACTIVE" and c1.button("Pause", key="ledger_pause"):
+            try:
+                paypal_api.suspend_subscription(sub_id)
+                db.update_subscription(sub_id, "SUSPENDED", None)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Pause failed: {e}")
+        if sub["status"] == "SUSPENDED" and c1.button("Resume", key="ledger_resume"):
+            try:
+                paypal_api.activate_subscription(sub_id)
+                refresh_all()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Resume failed: {e}")
+        if sub["status"] in ("ACTIVE", "SUSPENDED") and c2.button("Kill Switch", key="cancel_ledger"):
+            request_kill(sub_id)
+            st.rerun()
+        if c3.button("Clear selection", key="ledger_clear"):
+            st.session_state.pop("ledger_pick", None)
+            st.rerun()
 # ======================= SECTION PAGES =======================
 def sec_subscriptions():
     for s in subs:
@@ -149,13 +182,9 @@ def sec_subscriptions():
                         st.rerun()
                     except Exception as e:
                         st.error(f"Resume failed: {e}")
-            if b2.button("Cancel", key=f"cancel_{s['sub_id']}"):
-                try:
-                    paypal_api.cancel_subscription(s["sub_id"])
-                    db.update_subscription(s["sub_id"], "CANCELLED", None)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Cancel failed: {e}")
+            if b2.button("Kill Switch", key=f"cancel_{s['sub_id']}"):
+                request_kill(s["sub_id"])
+                st.rerun()
 
     st.divider()
     st.subheader("Subscription ledger")
@@ -170,7 +199,11 @@ def sec_subscriptions():
                             if days_until(s["next_billing_time"]) is not None else "-"),
             "Subscription ID": s["sub_id"],
         } for s in subs])
-        ui.show_grid(ledger, key="ledger_grid", status_col="Status", money_cols=["Monthly", "Yearly"])
+        picked_rows = ui.show_grid(ledger, key="ledger_grid", status_col="Status",
+                                   money_cols=["Monthly", "Yearly"], selectable=True)
+        if picked_rows:
+            st.session_state.ledger_pick = picked_rows[0].get("Subscription ID")
+        render_ledger_actions()
     else:
         st.info("Add a subscription to see the ledger.")
 
@@ -185,11 +218,11 @@ def sec_subscriptions():
                 if not txs:
                     st.info("No charges yet. That's expected during the free trial.")
                 else:
-                    st.dataframe(pd.DataFrame([{
+                    ui.show_grid(pd.DataFrame([{
                         "Time": t.get("time"),
                         "Status": t.get("status"),
                         "Amount": t.get("amount_with_breakdown", {}).get("gross_amount", {}).get("value"),
-                    } for t in txs]))
+                    } for t in txs]), key="history_grid", height=300)
             except Exception as e:
                 st.error(f"Could not load history: {e}")
 
@@ -636,7 +669,9 @@ ICONS = {
 
 def card_stat(key):
     if key == "subs":
-        return str(len([s for s in subs if s["status"] != "CANCELLED"])), "subscriptions tracked"
+        live = len([s for s in subs if s["status"] != "CANCELLED"])
+        killed = len([s for s in subs if s["status"] == "CANCELLED"])
+        return str(live), "subscriptions tracked" + (f", {killed} cancelled" if killed else "")
     if key == "calendar":
         days = [d for d in (days_until(s["next_billing_time"]) for s in active) if d is not None]
         return (str(min(days)), "days to next charge") if days else ("-", "no upcoming charges")
@@ -676,12 +711,88 @@ def render_cards():
                     )
                     st.button("Open", key=f"open_{key}", on_click=go, args=(key,))
 
+def request_kill(sub_id):
+    st.session_state.kill_target = sub_id
+    st.session_state.pop("kill_receipt", None)
 
+
+def abort_kill():
+    st.session_state.pop("kill_target", None)
+    st.session_state.map_nonce = st.session_state.get("map_nonce", 0) + 1
+
+
+def render_kill_panel():
+    receipt = st.session_state.get("kill_receipt")
+    if receipt:
+        with st.container(key="kill_receipt"):
+            st.markdown(
+                f"<div class='kill-title ok'>KILL SWITCH COMPLETE</div>"
+                f"<div><b>{receipt['service']}</b> is now <b>{receipt['status']}</b> at PayPal "
+                f"(confirmed {receipt['when']}). You save ${receipt['yearly']:.2f} a year.</div>"
+                f"<div class='kill-note'>Cancelling stops future charges. "
+                f"Anything already owed is not erased.</div>",
+                unsafe_allow_html=True,
+            )
+            st.button("Dismiss", key="kill_receipt_dismiss",
+                      on_click=lambda: st.session_state.pop("kill_receipt", None))
+
+    target = st.session_state.get("kill_target")
+    if not target:
+        return
+    sub = next((s for s in db.list_subscriptions() if s["sub_id"] == target), None)
+    if not sub or sub["status"] == "CANCELLED":
+        st.session_state.pop("kill_target", None)
+        return
+
+    with st.container(key="kill_panel"):
+        d = days_until(sub["next_billing_time"])
+        nxt = f"Next charge in {d} day(s)." if d is not None else "No charge scheduled yet."
+        st.markdown(
+            f"<div class='kill-title'>KILL SWITCH ARMED</div>"
+            f"<div><b>{sub['service']}</b> &middot; ${sub['price']:.2f}/month &middot; "
+            f"{sub['status']} &middot; {nxt}<br>This tells PayPal to cancel the subscription and "
+            f"can't be undone. You would save ${sub['price'] * 12:.2f} a year.</div>",
+            unsafe_allow_html=True,
+        )
+        c1, c2, _ = st.columns([2, 1, 3])
+        if c1.button("Confirm: cancel with PayPal", key="kill_confirm"):
+            try:
+                paypal_api.cancel_subscription(target)
+                proof = paypal_api.get_subscription(target)  # PayPal's own record of the result
+                status = proof.get("status", "CANCELLED")
+                db.update_subscription(target, status, None)
+                yearly = sub["price"] * 12
+                detail = (f"Kill Switch used on {sub['service']}. PayPal reports {status}. "
+                          f"Saves ${yearly:.2f} a year.")
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+                db.add_event(f"KILL-{target}-{stamp}", "BOUNCER.KILL_SWITCH", target, detail)
+                alerts.send_alert(f"Kill Switch: {detail}")
+                st.session_state.kill_receipt = {
+                    "service": sub["service"], "status": status, "yearly": yearly,
+                    "when": proof.get("status_update_time", "just now"),
+                }
+                st.session_state.pop("kill_target", None)
+                st.session_state.map_nonce = st.session_state.get("map_nonce", 0) + 1
+                st.rerun()
+            except Exception as e:
+                st.error(f"Kill Switch failed: {e}")
+        c2.button("Abort", key="kill_abort", on_click=abort_kill)
 # ======================= HOME =======================
 def render_banner():
+    def tile(label, value, cap, cls=""):
+        return (f"<div class='kpi {cls}'><span class='ar'>&nearr;</span>"
+                f"<div class='lab'>{label}</div><div class='num'>{value}</div>"
+                f"<div class='cap'>{cap}</div></div>")
+
     with st.container(key="banner"):
-        st.markdown(ui.text_roll_html("Bouncer"), unsafe_allow_html=True)
-        st.caption("The bouncer for your PayPal subscriptions. Sandbox mode: no real money moves.")
+        head_l, head_r = st.columns([4, 1])
+        with head_l:
+            st.markdown(ui.text_roll_html("Bouncer"), unsafe_allow_html=True)
+            st.caption("The bouncer for your PayPal subscriptions. Sandbox mode: no real money moves.")
+        with head_r:
+            if st.button("Refresh from PayPal"):
+                refresh_all()
+                st.rerun()
 
         alert_msg = None
         limit = int(db.get_setting("alert_days", "3"))
@@ -690,31 +801,55 @@ def render_banner():
             if d is not None and d <= limit:
                 alert_msg = f"Hold up! {s['service']} starts charging ${s['price']:.2f} in {d} day(s)."
                 break
-        if alert_msg:
-            components.html(ui.bouncer_html(alert_msg, alert=True), height=260)
-        elif active:
-            components.html(ui.bouncer_html(
-                f"All clear, boss. I'm watching {len(active)} subscription(s).", False), height=260)
-        else:
-            components.html(ui.bouncer_html("Nobody's on the list yet. Add a subscription.", False),
-                            height=260)
 
-        if st.button("Refresh from PayPal"):
-            refresh_all()
-            st.rerun()
+        days = [d for d in (days_until(s["next_billing_time"]) for s in active) if d is not None]
+        tracked = len([s for s in subs if s["status"] != "CANCELLED"])
+        cancelled = len([s for s in subs if s["status"] == "CANCELLED"])
+        monthly = sum(s["price"] for s in active)
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Active subscriptions", len(active))
-        m2.metric("Monthly cost once trials end", f"${sum(s['price'] for s in active):.2f}")
-        m3.metric("Cancelled", len([s for s in subs if s["status"] == "CANCELLED"]))
+        top_l, top_r = st.columns([1.65, 1])
+        with top_l:
+            with st.container(key="tile_guard"):
+                if alert_msg:
+                    scene = ui.bouncer_html(alert_msg, alert=True)
+                elif active:
+                    scene = ui.bouncer_html(
+                        f"All clear, boss. I'm watching {len(active)} subscription(s).", False)
+                else:
+                    scene = ui.bouncer_html("Nobody's on the list yet. Add a subscription.", False)
+                components.html(scene, height=255)
+        with top_r:
+            st.markdown(
+                "<div class='kpi-grid'>"
+                + tile("Active subscriptions", len(active), f"of {tracked} tracked", "hl")
+                + tile("Monthly cost", f"${monthly:.2f}", "once trials end")
+                + tile("Cancelled", cancelled, "subscriptions ended")
+                + tile("Next charge", str(min(days)) if days else "-",
+                       "days away" if days else "nothing scheduled")
+                + "</div>",
+                unsafe_allow_html=True,
+            )
 
         if subs:
-            left, right = st.columns(2)
-            with left:
-                components.html(ui.subscription_map_html(subs, budget), height=490)
-            with right:
-                components.html(ui.spend_rings_html(subs, budget), height=420)
+            mid_l, mid_r = st.columns([1.5, 1])
+            with mid_l:
+                with st.container(key="tile_map"):
+                    components.html(
+                        ui.kill_map_html(subs, budget, st.session_state.get("map_nonce", 0)),
+                        height=480)
+            with mid_r:
+                rings = ui.spend_rings_html(subs, budget)
+                rings = (rings.replace("body {", "html, body { height:100%; } body {", 1)
+                              .replace(".card {", ".card { display:flex; flex-direction:column; "
+                                       "height:100%; box-sizing:border-box;", 1)
+                              .replace(".body {", ".body { flex:1;", 1))
+                components.html(rings, height=480)
 
+            with st.container(key="killbridge"):
+                for s in subs:
+                    if s["status"] in ("ACTIVE", "SUSPENDED"):
+                        st.button(f"kill-{s['sub_id']}", key=f"bridge_{s['sub_id']}",
+                                  on_click=request_kill, args=(s["sub_id"],))
 
 def render_home():
     render_banner()
@@ -744,6 +879,7 @@ def render_detail(key):
 
 
 page = st.session_state.get("page", "home")
+render_kill_panel()
 if page in SECTIONS:
     render_detail(page)
 else:
