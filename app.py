@@ -118,6 +118,9 @@ def live_events(show_table=True):
             "Service": names.get(e["sub_id"], "-"),
             "Detail": e["detail"],
         } for e in events]))
+def days_or_minus_one(s):
+    d = days_until(s["next_billing_time"])
+    return d if d is not None else -1
 
 def render_ledger_actions():
     sub_id = st.session_state.get("ledger_pick")
@@ -190,17 +193,22 @@ def sec_subscriptions():
     st.subheader("Subscription ledger")
     st.caption("Click a column header to sort, or use the filter menu on a column.")
     if subs:
+        limit = int(db.get_setting("alert_days", "3"))
         ledger = pd.DataFrame([{
             "Service": s["service"],
             "Status": s["status"],
             "Monthly": s["price"],
             "Yearly": round(s["price"] * 12, 2),
-            "Next charge": (f"in {days_until(s['next_billing_time'])} day(s)"
-                            if days_until(s["next_billing_time"]) is not None else "-"),
+            "Budget share": 0 if s["status"] == "CANCELLED" else round(s["price"] / budget * 100, 1),
+            "Days left": days_or_minus_one(s),
             "Subscription ID": s["sub_id"],
         } for s in subs])
-        picked_rows = ui.show_grid(ledger, key="ledger_grid", status_col="Status",
-                                   money_cols=["Monthly", "Yearly"], selectable=True)
+        picked_rows = ui.show_grid(
+            ledger, key="ledger_grid", money_cols=["Monthly", "Yearly"], selectable=True,
+            renderers={"Status": ui.STATUS_PILL, "Budget share": ui.BUDGET_BAR,
+                       "Days left": ui.days_renderer(limit)},
+            row_style=ui.due_row_style(limit), search=True)
+
         if picked_rows:
             st.session_state.ledger_pick = picked_rows[0].get("Subscription ID")
         render_ledger_actions()
