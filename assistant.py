@@ -7,6 +7,7 @@ import anthropic
 from dotenv import load_dotenv
 
 import db
+import ai_budget
 
 load_dotenv()
 client = anthropic.Anthropic()
@@ -103,6 +104,8 @@ def chat(history, proposals):
     start = len(history)
     try:
         for _ in range(6):
+            if not ai_budget.allow_call():
+                  raise RuntimeError("Daily AI limit reached. Please try again tomorrow.")
             resp = client.messages.create(
                 model=MODEL,
                 max_tokens=1500,

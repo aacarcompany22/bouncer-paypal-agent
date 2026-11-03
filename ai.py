@@ -2,6 +2,7 @@
 import json
 import anthropic
 from dotenv import load_dotenv
+import ai_budget
 
 load_dotenv()  # load .env before the client is created
 client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from .env via the environment
@@ -38,6 +39,8 @@ def get_advice(subscriptions):
         + "\n\nCatalog:\n"
         + json.dumps(CATALOG, indent=2)
     )
+    if not ai_budget.allow_call():
+        raise RuntimeError("Daily AI limit reached. Please try again tomorrow.")
     msg = client.messages.create(
         model=MODEL,
         max_tokens=800,
