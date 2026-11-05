@@ -1,7 +1,7 @@
 
 #!/bin/bash
 export PORT="${PORT:-10000}"
-
+python demo_restore.py || echo "Demo restore skipped"
 uvicorn webhook_server:app --host 127.0.0.1 --port 8000 &
 streamlit run app.py \
   --server.port 8501 --server.address 127.0.0.1 --server.headless true \

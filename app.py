@@ -75,8 +75,14 @@ with st.sidebar:
         db.set_setting("alert_days", chosen)
         st.toast(f"Saved: you'll be warned {chosen} day(s) ahead")
     if st.button("Send test alert"):
-        alerts.send_alert("Bouncer test alert. Your phone is connected!")
-        st.toast("Test alert sent to Discord")
+            if st.button("Restore from PayPal"):
+              import demo_restore
+
+    n = demo_restore.restore()
+    st.toast(f"Restored {n} subscription(s) from PayPal")
+    st.rerun()
+    alerts.send_alert("Bouncer test alert. Your phone is connected!")
+    st.toast("Test alert sent to Discord")
 
     st.divider()
     st.caption("Monthly budget")
