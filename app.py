@@ -1,5 +1,6 @@
 
 import json
+import time
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -64,6 +65,7 @@ with st.sidebar:
             sub_id, approve_url = paypal_api.create_subscription(info["plan_id"], brand=service)
             db.add_subscription(sub_id, service, info["plan_id"], info["price"],
                                 "APPROVAL_PENDING", approve_url)
+            st.session_state.setdefault("watch", {})[sub_id] = time.time()
             st.success("Created. Approve it with your sandbox Personal account.")
         except Exception as e:
             st.error(f"Could not create subscription: {e}")
@@ -160,6 +162,30 @@ def render_ledger_actions():
         if c3.button("Clear selection", key="ledger_clear"):
             st.session_state.pop("ledger_pick", None)
             st.rerun()
+@st.fragment(run_every=4)
+def auto_sync():
+    """Watch subscriptions created in this session and update them as soon as PayPal changes them."""
+    watch = st.session_state.get("watch", {})
+    if not watch:
+        return
+    local = {s["sub_id"]: s["status"] for s in db.list_subscriptions()}
+    changed = False
+    for sub_id, started in list(watch.items()):
+        if time.time() - started > 600:  # stop watching after 10 minutes
+            watch.pop(sub_id, None)
+            continue
+        try:
+            data = paypal_api.get_subscription(sub_id)
+        except Exception:
+            continue
+        status = data.get("status")
+        if status and status != local.get(sub_id):
+            db.update_subscription(sub_id, status, data.get("billing_info", {}).get("next_billing_time"))
+            changed = True
+        if status in ("ACTIVE", "SUSPENDED", "CANCELLED", "EXPIRED"):
+            watch.pop(sub_id, None)
+    if changed:
+        st.rerun()
 # ======================= SECTION PAGES =======================
 def sec_subscriptions():
     for s in subs:
@@ -898,3 +924,4 @@ if page in SECTIONS:
     render_detail(page)
 else:
     render_home()
+auto_sync()
