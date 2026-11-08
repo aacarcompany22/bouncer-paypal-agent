@@ -10,6 +10,7 @@ import alerts
 import db
 import paypal_api
 import pools
+import watcher
 from paypal_setup import headers
 
 load_dotenv()
@@ -158,4 +159,5 @@ def check_pools():
 scheduler = BackgroundScheduler()
 scheduler.add_job(check_trials, "interval", minutes=1)
 scheduler.add_job(check_pools, "interval", minutes=1)
+scheduler.add_job(watcher.run_watch, "interval", seconds=15)  # proactive AI watchdog
 scheduler.start()

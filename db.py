@@ -37,6 +37,20 @@ def init_db():
         conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)"
         )
+        # what the proactive AI watchdog decided about each event
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS agent_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT UNIQUE,
+                created_at TEXT,
+                status TEXT,
+                headline TEXT,
+                message TEXT,
+                sub_id TEXT,
+                action TEXT,
+                reason TEXT
+            )"""
+        )
 
 
 def add_subscription(sub_id, service, plan_id, price, status, approve_url):
@@ -108,3 +122,53 @@ def set_setting(key, value):
 def update_price_for_plan(plan_id, price):
     with connect() as conn:
         conn.execute("UPDATE subscriptions SET price = ? WHERE plan_id = ?", (price, plan_id))
+
+
+# ---------- Proactive AI watchdog ----------
+def max_event_id():
+    with connect() as conn:
+        row = conn.execute("SELECT MAX(id) AS m FROM events").fetchone()
+    return row["m"] or 0
+
+
+def events_after(last_id, limit=20):
+    """Events newer than last_id, oldest first."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM events WHERE id > ? ORDER BY id ASC LIMIT ?", (last_id, limit)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def claim_agent_review(event_id):
+    """Reserve an event for review. Returns False if it was already reviewed (or is being)."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO agent_alerts (event_id, created_at, status) VALUES (?, ?, 'thinking')",
+            (event_id, now),
+        )
+    return cur.rowcount > 0
+
+
+def finish_agent_review(event_id, status, headline=None, message=None,
+                        sub_id=None, action=None, reason=None):
+    with connect() as conn:
+        conn.execute(
+            "UPDATE agent_alerts SET status = ?, headline = ?, message = ?, sub_id = ?, "
+            "action = ?, reason = ? WHERE event_id = ?",
+            (status, headline, message, sub_id, action, reason, event_id),
+        )
+
+
+def list_agent_alerts(status="open", limit=3):
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM agent_alerts WHERE status = ? ORDER BY id DESC LIMIT ?", (status, limit)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_agent_alert_status(alert_id, status):
+    with connect() as conn:
+        conn.execute("UPDATE agent_alerts SET status = ? WHERE id = ?", (status, alert_id))

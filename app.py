@@ -1,7 +1,10 @@
 
 import json
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from html import escape
 
 import pandas as pd
 import streamlit as st
@@ -20,15 +23,29 @@ import pools
 import demo_restore
 
 st.set_page_config(page_title="Bouncer",  layout="wide")
-db.init_db()
-pools.init()
-with open("style.css") as css_file:
-    st.markdown(f"<style>{css_file.read()}</style>", unsafe_allow_html=True)
-    st.markdown("<style>@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');</style>",
+
+
+# Streamlit re-runs this whole file on every click, so one-off work is cached.
+@st.cache_resource
+def _init_tables():
+    db.init_db()
+    pools.init()
+
+
+@st.cache_data
+def _read_text(path, mtime):
+    # keyed on the file's modified time, so edits to the file are still picked up
+    with open(path) as f:
+        return f.read()
+
+
+_init_tables()
+st.markdown(f"<style>{_read_text('style.css', os.path.getmtime('style.css'))}</style>",
+            unsafe_allow_html=True)
+st.markdown("<style>@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');</style>",
             unsafe_allow_html=True)
 
-with open("services.json") as f:
-    SERVICES = json.load(f)
+SERVICES = json.loads(_read_text("services.json", os.path.getmtime("services.json")))
 
 
 def days_until(ts):
@@ -38,12 +55,25 @@ def days_until(ts):
     return (dt - datetime.now(timezone.utc)).days
 
 
+def _fetch(sub_id):
+    try:
+        return paypal_api.get_subscription(sub_id), None
+    except Exception as e:
+        return None, e
+
+
 def refresh_all():
-    for sub in db.list_subscriptions():
-        if sub["status"] == "CANCELLED":
-            continue
+    to_check = [s for s in db.list_subscriptions() if s["status"] != "CANCELLED"]
+    if not to_check:
+        return
+    # ask PayPal about every subscription at once instead of one after another;
+    # the database writes and warnings still happen here, in the original order
+    with ThreadPoolExecutor(max_workers=min(8, len(to_check))) as pool:
+        results = list(pool.map(_fetch, [s["sub_id"] for s in to_check]))
+    for sub, (data, err) in zip(to_check, results):
         try:
-            data = paypal_api.get_subscription(sub["sub_id"])
+            if err:
+                raise err
             billing = data.get("billing_info", {})
             db.update_subscription(sub["sub_id"], data["status"], billing.get("next_billing_time"))
         except Exception as e:
@@ -102,6 +132,8 @@ with st.sidebar:
 
 subs = db.list_subscriptions()
 active = [s for s in subs if s["status"] == "ACTIVE"]
+# days until each active subscription's next charge, worked out once per run
+active_days = [(s, days_until(s["next_billing_time"])) for s in active]
 
 
 # ---------- Live events (also keeps the page auto-refreshing on new webhooks) ----------
@@ -225,7 +257,7 @@ def sec_subscriptions():
     st.subheader("Subscription ledger")
     st.caption("Click a column header to sort, or use the filter menu on a column.")
     if subs:
-        limit = int(db.get_setting("alert_days", "3"))
+        limit = chosen  # the alert-days value the sidebar just read and saved
         ledger = pd.DataFrame([{
             "Service": s["service"],
             "Status": s["status"],
@@ -284,7 +316,8 @@ def sec_calendar():
     services = sorted({c["service"] for c in charges})
     drop = st.multiselect("What if I cancelled...", services)
     fig, total = insights.annual_figure(charges, excluded=drop)
-    base_total = insights.annual_figure(charges)[1]
+    # with nothing excluded the totals are identical, so skip building a second chart
+    base_total = insights.annual_figure(charges)[1] if drop else total
     m1, m2 = st.columns(2)
     m1.metric("Projected 12-month spend", f"${total:.2f}")
     m2.metric("Saved by cancelling your selection", f"${base_total - total:.2f}")
@@ -556,10 +589,6 @@ CARD_TEXT = {
 }
 
 
-def _svg(inner):
-    return ("<svg viewBox='0 0 56 56' width='58' height='58' fill='none' stroke='#00d632' "
-            "stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'>" + inner + "</svg>")
-
 PALETTE = {
     "k": "#0b0f19", "w": "#ffffff", "s": "#cfd6e8", "S": "#8f9ab8",
     "b": "#4da3ff", "r": "#ff4b4b", "y": "#ffbb00", "Y": "#c98a00",
@@ -682,7 +711,7 @@ SPRITE_POOL = [
 
 
 def _pixels(rows, anim="bob"):
-    rects = ""
+    rects = []
     for y, row in enumerate(rows):
         for x, ch in enumerate(row):
             if ch == ".":
@@ -692,19 +721,25 @@ def _pixels(rows, anim="bob"):
             if isinstance(color, tuple):
                 color, name = color
                 cls = f" class='{name}'"
-            rects += f"<rect{cls} x='{x}' y='{y}' width='1.02' height='1.02' fill='{color}'/>"
+            rects.append(f"<rect{cls} x='{x}' y='{y}' width='1.02' height='1.02' fill='{color}'/>")
     return (f"<svg class='pix {anim}' viewBox='0 0 16 16' width='72' height='72' "
-            f"shape-rendering='crispEdges'>{rects}</svg>")
+            f"shape-rendering='crispEdges'>{''.join(rects)}</svg>")
 
 
-ICONS = {
-    "subs": _pixels(SPRITE_SUBS),
-    "calendar": _pixels(SPRITE_CALENDAR),
-    "ai": _pixels(SPRITE_ROBOT),
-    "audit": _pixels(SPRITE_MAGNIFIER, "sweep"),
-    "price": _pixels(SPRITE_COIN),
-    "pools": _pixels(SPRITE_POOL),
-}
+@st.cache_resource
+def _build_icons():
+    # the sprites never change, so build the SVGs once instead of on every click
+    return {
+        "subs": _pixels(SPRITE_SUBS),
+        "calendar": _pixels(SPRITE_CALENDAR),
+        "ai": _pixels(SPRITE_ROBOT),
+        "audit": _pixels(SPRITE_MAGNIFIER, "sweep"),
+        "price": _pixels(SPRITE_COIN),
+        "pools": _pixels(SPRITE_POOL),
+    }
+
+
+ICONS = _build_icons()
 
 
 def card_stat(key):
@@ -713,7 +748,7 @@ def card_stat(key):
         killed = len([s for s in subs if s["status"] == "CANCELLED"])
         return str(live), "subscriptions tracked" + (f", {killed} cancelled" if killed else "")
     if key == "calendar":
-        days = [d for d in (days_until(s["next_billing_time"]) for s in active) if d is not None]
+        days = [d for _s, d in active_days if d is not None]
         return (str(min(days)), "days to next charge") if days else ("-", "no upcoming charges")
     if key == "ai":
         return "AI", "ask Bouncer anything"
@@ -779,7 +814,7 @@ def render_kill_panel():
     target = st.session_state.get("kill_target")
     if not target:
         return
-    sub = next((s for s in db.list_subscriptions() if s["sub_id"] == target), None)
+    sub = next((s for s in subs if s["sub_id"] == target), None)
     if not sub or sub["status"] == "CANCELLED":
         st.session_state.pop("kill_target", None)
         return
@@ -817,6 +852,64 @@ def render_kill_panel():
             except Exception as e:
                 st.error(f"Kill Switch failed: {e}")
         c2.button("Abort", key="kill_abort", on_click=abort_kill)
+
+
+# ---------- Proactive AI watchdog alerts ----------
+def approve_agent_alert(alert, sub):
+    if alert["action"] == "cancel":
+        # cancelling can't be undone, so it still goes through the Kill Switch confirmation
+        request_kill(sub["sub_id"])
+        db.set_agent_alert_status(alert["id"], "approved")
+        return
+    try:
+        paypal_api.suspend_subscription(sub["sub_id"])
+        db.update_subscription(sub["sub_id"], "SUSPENDED", None)
+        db.set_agent_alert_status(alert["id"], "approved")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        db.add_event(f"AI-OK-{alert['id']}-{stamp}", "BOUNCER.AI_APPROVED", sub["sub_id"],
+                     f"You approved Bouncer AI's advice: paused {sub['service']}.")
+    except Exception as e:
+        st.session_state.agent_error = f"Pause failed: {e}"
+
+
+def render_agent_panel():
+    open_alerts = db.list_agent_alerts("open", 3)
+    if not open_alerts:
+        return
+    by_id = {s["sub_id"]: s for s in subs}
+    with st.container(key="agent_panel"):
+        st.markdown("<div class='agent-title'>BOUNCER AI SPOTTED SOMETHING</div>",
+                    unsafe_allow_html=True)
+        err = st.session_state.pop("agent_error", None)
+        if err:
+            st.error(err)
+        for alert in open_alerts:
+            sub = by_id.get(alert["sub_id"])
+            # only offer the action if it still makes sense for that subscription
+            can_act = bool(alert["action"] and sub and sub["status"] != "CANCELLED"
+                           and not (alert["action"] == "pause" and sub["status"] != "ACTIVE"))
+            with st.container(key=f"agent_alert_{alert['id']}"):
+                rec = ""
+                if can_act:
+                    rec = (f"<div class='agent-rec'>Recommends: <b>{alert['action']} "
+                           f"{escape(sub['service'])}</b> &middot; {escape(alert['reason'] or '')}</div>")
+                st.markdown(
+                    f"<div class='agent-head'>{escape(alert['headline'] or '')}</div>"
+                    f"<div class='agent-msg'>{escape(alert['message'] or '')}</div>{rec}",
+                    unsafe_allow_html=True,
+                )
+                c1, c2, _ = st.columns([2, 1.3, 2.5])
+                if can_act:
+                    c1.button(f"Approve {alert['action']}", key=f"agent_ok_{alert['id']}",
+                              on_click=approve_agent_alert, args=(alert, sub))
+                (c2 if can_act else c1).button(
+                    "Dismiss", key=f"agent_no_{alert['id']}",
+                    on_click=db.set_agent_alert_status, args=(alert["id"], "dismissed"))
+        st.markdown("<div class='agent-note'>Bouncer AI watches your PayPal events and only suggests. "
+                    "Nothing changes until you approve. General guidance on sandbox data.</div>",
+                    unsafe_allow_html=True)
+
+
 # ======================= HOME =======================
 def render_banner():
     def tile(label, value, cap, cls=""):
@@ -835,14 +928,13 @@ def render_banner():
                 st.rerun()
 
         alert_msg = None
-        limit = int(db.get_setting("alert_days", "3"))
-        for s in active:
-            d = days_until(s["next_billing_time"])
+        limit = chosen  # the alert-days value the sidebar just read and saved
+        for s, d in active_days:
             if d is not None and d <= limit:
                 alert_msg = f"Hold up! {s['service']} starts charging ${s['price']:.2f} in {d} day(s)."
                 break
 
-        days = [d for d in (days_until(s["next_billing_time"]) for s in active) if d is not None]
+        days = [d for _s, d in active_days if d is not None]
         tracked = len([s for s in subs if s["status"] != "CANCELLED"])
         cancelled = len([s for s in subs if s["status"] == "CANCELLED"])
         monthly = sum(s["price"] for s in active)
@@ -920,6 +1012,7 @@ def render_detail(key):
 
 page = st.session_state.get("page", "home")
 render_kill_panel()
+render_agent_panel()
 if page in SECTIONS:
     render_detail(page)
 else:
