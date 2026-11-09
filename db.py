@@ -108,6 +108,15 @@ def list_events(limit=15):
     return [dict(r) for r in rows]
 
 
+def count_events(limit=500):
+    """How many events there are, counted by the database, up to limit."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM (SELECT 1 FROM events LIMIT ?)", (limit,)
+        ).fetchone()
+    return row["n"]
+
+
 def get_setting(key, default=None):
     with connect() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
@@ -149,6 +158,14 @@ def claim_agent_review(event_id):
             (event_id, now),
         )
     return cur.rowcount > 0
+
+
+def release_agent_review(event_id):
+    """Give up a claim that was never finished, so it can be tried again."""
+    with connect() as conn:
+        conn.execute(
+            "DELETE FROM agent_alerts WHERE event_id = ? AND status = 'thinking'", (event_id,)
+        )
 
 
 def finish_agent_review(event_id, status, headline=None, message=None,

@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 
 import alerts
+import autopilot
 import db
 import paypal_api
 import pools
@@ -160,5 +161,6 @@ def check_pools():
 scheduler = BackgroundScheduler()
 scheduler.add_job(check_trials, "interval", minutes=1)
 scheduler.add_job(check_pools, "interval", minutes=1)
+scheduler.add_job(autopilot.run, "interval", minutes=1)  # the user's standing pause rule
 scheduler.add_job(watcher.run_watch, "interval", seconds=15)  # proactive AI watchdog
 scheduler.start()

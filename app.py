@@ -16,6 +16,7 @@ import paypal_api
 import ui
 import assistant 
 import alerts
+import autopilot
 import insights
 from dateutil.relativedelta import relativedelta
 import search_store
@@ -124,6 +125,21 @@ with st.sidebar:
     if chosen != current:
         db.set_setting("alert_days", chosen)
         st.toast(f"Saved: you'll be warned {chosen} day(s) ahead")
+    auto_was = autopilot.enabled()
+    auto_on = st.toggle("Autopilot", value=auto_was,
+                        help="A standing rule: Bouncer pauses a free trial through PayPal before it "
+                             "starts charging, then tells you. It only pauses, never cancels.")
+    if auto_on != auto_was:
+        db.set_setting("autopilot", "1" if auto_on else "0")
+        if auto_on:
+            n = autopilot.run()
+            st.toast(f"Autopilot on. Paused {n} trial(s) about to charge." if n
+                     else "Autopilot on. Bouncer will pause trials before they charge.")
+        else:
+            st.toast("Autopilot off")
+    st.caption(f"Autopilot pauses free trials {chosen} day(s) before they charge. "
+               "You can resume any of them." if auto_on else
+               f"Switch on to have Bouncer pause free trials {chosen} day(s) before they charge.")
     if st.button("Send test alert"):
         sent, problem = alerts.send_alert("Bouncer test alert. Your phone is connected!")
         if sent:
@@ -775,7 +791,7 @@ def card_stat(key):
     if key == "ai":
         return "AI", "ask Bouncer anything"
     if key == "audit":
-        return str(len(db.list_events(500))), "events logged"
+        return str(db.count_events(500)), "events logged"
     if key == "pools":
         return str(len(pools.list_pools())), "pools running"
     return str(len(SERVICES)), "plans watched"
@@ -899,6 +915,20 @@ def approve_agent_alert(alert, sub):
         request_kill(sub["sub_id"])
         db.set_agent_alert_status(alert["id"], "approved")
         return
+    if alert["action"] == "resume":
+        # undo an Autopilot pause; Autopilot acts once per subscription, so it stays resumed
+        try:
+            paypal_api.activate_subscription(sub["sub_id"])
+            data = paypal_api.get_subscription(sub["sub_id"])
+            db.update_subscription(sub["sub_id"], data["status"],
+                                   data.get("billing_info", {}).get("next_billing_time"))
+            db.set_agent_alert_status(alert["id"], "approved")
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+            db.add_event(f"AI-OK-{alert['id']}-{stamp}", "BOUNCER.AUTOPILOT_UNDONE", sub["sub_id"],
+                         f"You resumed {sub['service']} after Autopilot paused it.")
+        except Exception as e:
+            st.session_state.agent_error = explain_paypal_failure("Resume", sub["sub_id"], e)
+        return
     try:
         paypal_api.suspend_subscription(sub["sub_id"])
         db.update_subscription(sub["sub_id"], "SUSPENDED", None)
@@ -925,10 +955,15 @@ def render_agent_panel():
             sub = by_id.get(alert["sub_id"])
             # only offer the action if it still makes sense for that subscription
             can_act = bool(alert["action"] and sub and sub["status"] != "CANCELLED"
-                           and not (alert["action"] == "pause" and sub["status"] != "ACTIVE"))
+                           and not (alert["action"] == "pause" and sub["status"] != "ACTIVE")
+                           and not (alert["action"] == "resume" and sub["status"] != "SUSPENDED"))
+            undo = alert["action"] == "resume"  # Autopilot already acted; the button undoes it
             with st.container(key=f"agent_alert_{alert['id']}"):
                 rec = ""
-                if can_act:
+                if can_act and undo:
+                    rec = (f"<div class='agent-rec'>Done by <b>Autopilot</b> &middot; "
+                           f"{escape(alert['reason'] or '')}</div>")
+                elif can_act:
                     rec = (f"<div class='agent-rec'>Recommends: <b>{alert['action']} "
                            f"{escape(sub['service'])}</b> &middot; {escape(alert['reason'] or '')}</div>")
                 st.markdown(
@@ -938,14 +973,18 @@ def render_agent_panel():
                 )
                 c1, c2, _ = st.columns([2, 1.3, 2.5])
                 if can_act:
-                    c1.button(f"Approve {alert['action']}", key=f"agent_ok_{alert['id']}",
+                    c1.button("Undo: resume" if undo else f"Approve {alert['action']}",
+                              key=f"agent_ok_{alert['id']}",
                               on_click=approve_agent_alert, args=(alert, sub))
                 (c2 if can_act else c1).button(
-                    "Dismiss", key=f"agent_no_{alert['id']}",
+                    "Keep paused" if can_act and undo else "Dismiss", key=f"agent_no_{alert['id']}",
                     on_click=db.set_agent_alert_status, args=(alert["id"], "dismissed"))
-        st.markdown("<div class='agent-note'>Bouncer AI watches your PayPal events and only suggests. "
-                    "Nothing changes until you approve. General guidance on sandbox data.</div>",
-                    unsafe_allow_html=True)
+        note = ("Bouncer AI watches your PayPal events and only suggests. "
+                "Nothing changes until you approve. General guidance on sandbox data.")
+        if any(a["action"] == "resume" for a in open_alerts):
+            note = ("Autopilot only pauses, and only under the rule you switched on. "
+                    "Everything else waits for your approval. General guidance on sandbox data.")
+        st.markdown(f"<div class='agent-note'>{note}</div>", unsafe_allow_html=True)
 
 
 # ======================= HOME =======================
@@ -976,6 +1015,9 @@ def render_banner():
         tracked = len([s for s in subs if s["status"] != "CANCELLED"])
         cancelled = len([s for s in subs if s["status"] == "CANCELLED"])
         monthly = sum(s["price"] for s in active)
+        paused = [s for s in subs if s["status"] == "SUSPENDED"]
+        # a year of charges avoided by everything that has been cancelled or paused
+        saved = sum(s["price"] * 12 for s in subs if s["status"] in ("CANCELLED", "SUSPENDED"))
 
         top_l, top_r = st.columns([1.65, 1])
         with top_l:
@@ -993,7 +1035,8 @@ def render_banner():
                 "<div class='kpi-grid'>"
                 + tile("Active subscriptions", len(active), f"of {tracked} tracked", "hl")
                 + tile("Monthly cost", f"${monthly:.2f}", "once trials end")
-                + tile("Cancelled", cancelled, "subscriptions ended")
+                + tile("Saved per year", f"${saved:,.2f}",
+                       f"{cancelled} cancelled, {len(paused)} paused")
                 + tile("Next charge", str(min(days)) if days else "-",
                        "days away" if days else "nothing scheduled")
                 + "</div>",

@@ -15,9 +15,10 @@ It watches every subscription event from PayPal as it happens. An AI agent decid
 | Feature | What you see |
 |---|---|
 | **Proactive AI watchdog** | Something happens on your account, like a price rise, a trial about to charge or a failed payment. Bouncer's AI checks the facts and decides whether you need to know. If you do, it raises an alert in the app and on Discord, with an optional pause or cancel recommendation you can approve in one click. |
+| **Autopilot** | A standing rule you switch on once. Bouncer then pauses a free trial through PayPal before it starts charging, without being asked, and tells you what it did. One click resumes it. |
 | **Kill Switch** | Drag a subscription from the live map into the pixel-art trash can, confirm, and Bouncer cancels it with PayPal. It then shows PayPal's own confirmation and how much you save per year. |
 | **AI assistant** | Ask things like "What should I cancel to save the most?" The assistant looks up your real subscriptions with tools and can *propose* a pause or cancel, but nothing happens until you press Approve. |
-| **Live dashboard** | A subscription map grouped by status, spend rings against your monthly budget, and tiles for active subscriptions, monthly cost and the next charge. It refreshes by itself when PayPal sends a webhook. |
+| **Live dashboard** | A subscription map grouped by status, spend rings against your monthly budget, and tiles for active subscriptions, monthly cost, the next charge and how much you've saved per year by cancelling or pausing. It refreshes by itself when PayPal sends a webhook. |
 | **Trial alerts** | Staged Discord reminders before a free trial turns into a charge. You choose how many days ahead. |
 | **Calendar and costs** | A month-by-month billing calendar and a 12-month cost projection, with "what if I cancelled…" to see what you'd save. |
 | **Price watch** | A merchant demo control: raise a plan's price through PayPal's API and watch Bouncer warn you about the yearly impact. |
@@ -48,6 +49,7 @@ Bouncer uses **Claude** (Anthropic) through tool use, with two roles:
 Guardrails:
 
 - **The AI never moves money.** It can only recommend. A pause happens only after you press Approve, and a cancel still goes through the Kill Switch confirmation, so it takes two clicks.
+- **Autopilot acts only with standing permission.** It is off until you switch it on. It only pauses, which you can undo, and never cancels. Before pausing it checks with PayPal that the subscription is still active and still in its trial. It acts once per subscription, so a trial you resume stays resumed (`autopilot.py`).
 - **Facts come from tools, not guesses.** The model is told never to guess prices, dates or statuses. In testing, it stayed quiet about a fake "charges in 2 days" event because the real data showed the next charge was weeks away.
 - **Recommendations are checked.** A suggested action is dropped if the subscription is already cancelled, or if it can't be paused.
 - **Spending is capped.** There's a daily limit on AI calls (`ai_budget.py`), and the watchdog reviews at most 3 events per run.
@@ -85,10 +87,11 @@ flowchart LR
 1. Open the live demo. The dashboard loads with subscriptions restored from PayPal.
 2. **Kill Switch:** drag a green (active) subscription bubble from the map into the trash can, then confirm.
 3. **Proactive AI:** open **Price watch**, raise a price, and go back to the dashboard. Within about 15–30 seconds a purple **Bouncer AI** alert appears with its analysis.
-4. **Ask the AI:** open **AI assistant** and ask "What should I cancel to save the most money?"
-5. **Subscribe:** pick a service in the sidebar and press **Subscribe**, then **Approve in PayPal**. Log in with the test buyer below. After approving, you return to Bouncer, and the status turns ACTIVE by itself.
+4. **Autopilot:** switch on **Autopilot** in the sidebar. Any free trial inside your warning window is paused through PayPal straight away, and a panel shows what Bouncer did, with **Undo: resume**.
+5. **Ask the AI:** open **AI assistant** and ask "What should I cancel to save the most money?"
+6. **Subscribe:** pick a service in the sidebar and press **Subscribe**, then **Approve in PayPal**. Log in with the test buyer below. After approving, you return to Bouncer, and the status turns ACTIVE by itself.
 
-Everything except step 5 works without a PayPal login.
+Everything except step 6 works without a PayPal login.
 
 ### Test buyer login (PayPal sandbox)
 
@@ -163,6 +166,7 @@ The `dockerfile` builds a single image that runs `start.sh`. That script restore
 | `style.css` | App styling |
 | `assistant.py` | Claude tool-use agent: chat assistant and the proactive `review_event` |
 | `watcher.py` | Background job that feeds new events to the AI watchdog |
+| `autopilot.py` | The standing rule that pauses trials before they charge |
 | `ai.py` | One-shot "cheaper alternatives" advice from a demo catalogue |
 | `ai_budget.py` | Daily AI call cap |
 | `webhook_server.py` | FastAPI webhook receiver and scheduled jobs |
