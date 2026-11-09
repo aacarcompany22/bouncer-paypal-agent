@@ -913,7 +913,7 @@ def render_agent_panel():
 # ======================= HOME =======================
 def render_banner():
     def tile(label, value, cap, cls=""):
-        return (f"<div class='kpi {cls}'><span class='ar'>&nearr;</span>"
+        return (f"<div class='kpi {cls}'>"
                 f"<div class='lab'>{label}</div><div class='num'>{value}</div>"
                 f"<div class='cap'>{cap}</div></div>")
 

@@ -427,17 +427,12 @@
   position: relative; min-height: 125px; padding: 14px 16px;
   background: #141a2b; border: 1px solid #232a40; border-radius: 18px;
 }
-.kpi.hl { background: linear-gradient(135deg, #27408f, #16224d); border-color: #34498f; }
-.kpi .lab { color: #9aa4bf; font-size: 13px; padding-right: 34px; }
+.kpi.hl { background: #1f3170; border-color: #34498f; }
+.kpi .lab { color: #9aa4bf; font-size: 13px; }
 .kpi.hl .lab { color: #d5ddf5; }
 .kpi .num { font-size: 36px; font-weight: 800; margin-top: 8px; line-height: 1.1; }
 .kpi .cap { font-size: 12px; color: #8f9ab8; margin-top: 4px; }
 .kpi.hl .cap { color: #c3cdee; }
-.kpi .ar {
-  position: absolute; top: 12px; right: 12px; width: 26px; height: 26px;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid #2f3a5c; border-radius: 50%; font-size: 13px; color: #cfd6e8;
-}
 .st-key-ledger_actions {
   border: 1px solid #232a40; border-radius: 16px;
   padding: .8rem 1rem; margin-top: .6rem;
