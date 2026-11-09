@@ -108,8 +108,11 @@ with st.sidebar:
         db.set_setting("alert_days", chosen)
         st.toast(f"Saved: you'll be warned {chosen} day(s) ahead")
     if st.button("Send test alert"):
-        alerts.send_alert("Bouncer test alert. Your phone is connected!")
-        st.toast("Test alert sent to Discord")
+        sent, problem = alerts.send_alert("Bouncer test alert. Your phone is connected!")
+        if sent:
+            st.toast("Test alert sent to Discord")
+        else:
+            st.error(f"Test alert not sent: {problem}.")
 
     if st.button("Restore from PayPal"):
         n = demo_restore.restore()
