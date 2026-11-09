@@ -86,9 +86,21 @@ flowchart LR
 2. **Kill Switch:** drag a green (active) subscription bubble from the map into the trash can, then confirm.
 3. **Proactive AI:** open **Price watch**, raise a price, and go back to the dashboard. Within about 15–30 seconds a purple **Bouncer AI** alert appears with its analysis.
 4. **Ask the AI:** open **AI assistant** and ask "What should I cancel to save the most money?"
-5. **Subscribe:** pick a service in the sidebar and press **Subscribe**, then **Approve in PayPal**. This step needs a PayPal *sandbox* buyer account; the login is in the submission notes. After approving, you return to Bouncer, and the status turns ACTIVE by itself.
+5. **Subscribe:** pick a service in the sidebar and press **Subscribe**, then **Approve in PayPal**. Log in with the test buyer below. After approving, you return to Bouncer, and the status turns ACTIVE by itself.
 
 Everything except step 5 works without a PayPal login.
+
+### Test buyer login (PayPal sandbox)
+
+Use this **sandbox** Personal account to approve subscriptions and pay pool shares. It only works on the PayPal sandbox and holds fake money.
+
+| | |
+|---|---|
+| Sandbox site | https://sandbox.paypal.com |
+| Email | `sb-jkxel53820431@personal.example.com` |
+| Password | `3o]VN$UI` |
+
+Please don't change this account's password, so other judges can still use it.
 
 ---
 
