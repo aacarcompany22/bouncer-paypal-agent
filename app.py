@@ -80,6 +80,23 @@ def refresh_all():
             st.warning(f"Could not refresh {sub['service']}: {e}")
 
 
+def explain_paypal_failure(action, sub_id, err):
+    """PayPal refused an action. Check the subscription's real status there: if Bouncer's copy
+    was out of date, update it and say so; otherwise report the original error."""
+    local = next((s["status"] for s in db.list_subscriptions() if s["sub_id"] == sub_id), None)
+    try:
+        data = paypal_api.get_subscription(sub_id)
+    except Exception:
+        return f"{action} failed: {err}"
+    status = data.get("status")
+    if status and status != local:
+        db.update_subscription(sub_id, status, data.get("billing_info", {}).get("next_billing_time"))
+        st.session_state.map_nonce = st.session_state.get("map_nonce", 0) + 1
+        return (f"{action} didn't go through because PayPal says this subscription is already "
+                f"{status}. Bouncer has updated its records; refresh the page to see it.")
+    return f"{action} failed: {err}"
+
+
 def go(page):
     st.session_state.page = page
 
@@ -183,14 +200,14 @@ def render_ledger_actions():
                 db.update_subscription(sub_id, "SUSPENDED", None)
                 st.rerun()
             except Exception as e:
-                st.error(f"Pause failed: {e}")
+                st.warning(explain_paypal_failure("Pause", sub_id, e))
         if sub["status"] == "SUSPENDED" and c1.button("Resume", key="ledger_resume"):
             try:
                 paypal_api.activate_subscription(sub_id)
                 refresh_all()
                 st.rerun()
             except Exception as e:
-                st.error(f"Resume failed: {e}")
+                st.warning(explain_paypal_failure("Resume", sub_id, e))
         if sub["status"] in ("ACTIVE", "SUSPENDED") and c2.button("Kill Switch", key="cancel_ledger"):
             request_kill(sub_id)
             st.rerun()
@@ -243,7 +260,7 @@ def sec_subscriptions():
                         db.update_subscription(s["sub_id"], "SUSPENDED", None)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Pause failed: {e}")
+                        st.warning(explain_paypal_failure("Pause", s["sub_id"], e))
             else:
                 if b1.button("▶ Resume", key=f"resume_{s['sub_id']}"):
                     try:
@@ -251,7 +268,7 @@ def sec_subscriptions():
                         refresh_all()
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Resume failed: {e}")
+                        st.warning(explain_paypal_failure("Resume", s["sub_id"], e))
             if b2.button("Kill Switch", key=f"cancel_{s['sub_id']}"):
                 request_kill(s["sub_id"])
                 st.rerun()
@@ -384,7 +401,7 @@ def sec_ai():
                 st.session_state.proposals.remove(p)
                 st.rerun()
             except Exception as e:
-                st.error(f"Could not complete that: {e}")
+                st.warning(explain_paypal_failure(p["action"].capitalize(), p["sub_id"], e))
         if b.button("✖ Dismiss", key=f"dismiss_{p['id']}"):
             st.session_state.proposals.remove(p)
             st.rerun()
@@ -805,10 +822,15 @@ def render_kill_panel():
     receipt = st.session_state.get("kill_receipt")
     if receipt:
         with st.container(key="kill_receipt"):
+            if receipt.get("already"):
+                outcome = ("PayPal had already ended it, so there was nothing left to cancel. "
+                           "Bouncer has updated its records.")
+            else:
+                outcome = f"You save ${receipt['yearly']:.2f} a year."
             st.markdown(
                 f"<div class='kill-title ok'>KILL SWITCH COMPLETE</div>"
                 f"<div><b>{receipt['service']}</b> is now <b>{receipt['status']}</b> at PayPal "
-                f"(confirmed {receipt['when']}). You save ${receipt['yearly']:.2f} a year.</div>"
+                f"(confirmed {receipt['when']}). {outcome}</div>"
                 f"<div class='kill-note'>Cancelling stops future charges. "
                 f"Anything already owed is not erased.</div>",
                 unsafe_allow_html=True,
@@ -837,19 +859,30 @@ def render_kill_panel():
         c1, c2, _ = st.columns([2, 1, 3])
         if c1.button("Confirm: cancel with PayPal", key="kill_confirm"):
             try:
-                paypal_api.cancel_subscription(target)
+                already = False
+                try:
+                    paypal_api.cancel_subscription(target)
+                except Exception:
+                    # PayPal refuses to cancel something that has already ended; check before failing
+                    if paypal_api.get_subscription(target).get("status") not in ("CANCELLED", "EXPIRED"):
+                        raise
+                    already = True
                 proof = paypal_api.get_subscription(target)  # PayPal's own record of the result
                 status = proof.get("status", "CANCELLED")
                 db.update_subscription(target, status, None)
                 yearly = sub["price"] * 12
-                detail = (f"Kill Switch used on {sub['service']}. PayPal reports {status}. "
-                          f"Saves ${yearly:.2f} a year.")
+                if already:
+                    detail = (f"Kill Switch used on {sub['service']}. PayPal had already ended it "
+                              f"({status}), so Bouncer updated its records.")
+                else:
+                    detail = (f"Kill Switch used on {sub['service']}. PayPal reports {status}. "
+                              f"Saves ${yearly:.2f} a year.")
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
                 db.add_event(f"KILL-{target}-{stamp}", "BOUNCER.KILL_SWITCH", target, detail)
                 alerts.send_alert(f"Kill Switch: {detail}")
                 st.session_state.kill_receipt = {
                     "service": sub["service"], "status": status, "yearly": yearly,
-                    "when": proof.get("status_update_time", "just now"),
+                    "when": proof.get("status_update_time", "just now"), "already": already,
                 }
                 st.session_state.pop("kill_target", None)
                 st.session_state.map_nonce = st.session_state.get("map_nonce", 0) + 1
@@ -874,7 +907,7 @@ def approve_agent_alert(alert, sub):
         db.add_event(f"AI-OK-{alert['id']}-{stamp}", "BOUNCER.AI_APPROVED", sub["sub_id"],
                      f"You approved Bouncer AI's advice: paused {sub['service']}.")
     except Exception as e:
-        st.session_state.agent_error = f"Pause failed: {e}"
+        st.session_state.agent_error = explain_paypal_failure("Pause", sub["sub_id"], e)
 
 
 def render_agent_panel():
