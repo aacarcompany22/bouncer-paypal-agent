@@ -304,7 +304,8 @@
 
 /* status pills */
 .pill { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 12px;
-        font-weight: 700; letter-spacing: .4px; border: 1px solid; }
+        font-weight: 700; letter-spacing: .4px; border: 1px solid;
+        overflow-wrap: normal; word-break: keep-all; }  /* wrap between words, never mid-word */
 .pill.ACTIVE { color: #2ecc71; background: rgba(46, 204, 113, .14); border-color: rgba(46, 204, 113, .5); }
 .pill.APPROVAL_PENDING { color: #f5a623; background: rgba(245, 166, 35, .14); border-color: rgba(245, 166, 35, .5); }
 .pill.SUSPENDED { color: #4da3ff; background: rgba(77, 163, 255, .14); border-color: rgba(77, 163, 255, .5); }

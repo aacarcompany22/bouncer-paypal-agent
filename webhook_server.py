@@ -11,7 +11,7 @@ import db
 import paypal_api
 import pools
 import watcher
-from paypal_setup import headers
+from paypal_setup import TIMEOUT, headers
 
 load_dotenv()
 BASE = os.getenv("PAYPAL_BASE_URL")
@@ -38,6 +38,7 @@ def verify_signature(req_headers, event):
         f"{BASE}/v1/notifications/verify-webhook-signature",
         headers=headers(),
         json=body,
+        timeout=TIMEOUT,
     )
     r.raise_for_status()
     return r.json().get("verification_status") == "SUCCESS"

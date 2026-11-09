@@ -1,20 +1,37 @@
 
 import os
+import time
+
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 BASE = os.getenv("PAYPAL_BASE_URL")
+TIMEOUT = 20  # seconds; stops the app hanging if PayPal is slow
+_token = {"value": None, "expires": 0.0}
+
+
+def app_url():
+    """Where PayPal sends people back after approving. Render sets RENDER_EXTERNAL_URL itself."""
+    return (os.getenv("APP_URL") or os.getenv("RENDER_EXTERNAL_URL")
+            or "http://localhost:8501").rstrip("/")
 
 
 def get_token():
+    # PayPal tokens last for hours, so reuse one until shortly before it expires
+    if _token["value"] and time.time() < _token["expires"] - 60:
+        return _token["value"]
     r = requests.post(
         f"{BASE}/v1/oauth2/token",
         auth=(os.getenv("PAYPAL_CLIENT_ID"), os.getenv("PAYPAL_SECRET")),
         data={"grant_type": "client_credentials"},
+        timeout=TIMEOUT,
     )
     r.raise_for_status()
-    return r.json()["access_token"]
+    data = r.json()
+    _token["value"] = data["access_token"]
+    _token["expires"] = time.time() + int(data.get("expires_in", 300))
+    return _token["value"]
 
 
 def headers():

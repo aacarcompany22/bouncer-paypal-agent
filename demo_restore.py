@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 import db
 import paypal_api
-from paypal_setup import headers
+from paypal_setup import TIMEOUT, headers
 
 load_dotenv()
 BASE = os.getenv("PAYPAL_BASE_URL")
@@ -22,10 +22,10 @@ def discover_from_webhooks(days=30, max_pages=5):
     params = {"page_size": 100, "start_time": start}
     found = []
     for _ in range(max_pages):
-        r = requests.get(url, headers=headers(), params=params)
+        r = requests.get(url, headers=headers(), params=params, timeout=TIMEOUT)
         if not r.ok and params and "page_size" in params:
             params = {k: v for k, v in params.items() if k != "page_size"}
-            r = requests.get(url, headers=headers(), params=params)
+            r = requests.get(url, headers=headers(), params=params, timeout=TIMEOUT)
         if not r.ok:
             print("Could not read webhook history:", r.status_code, r.text[:200])
             break
@@ -45,7 +45,7 @@ def discover_from_webhooks(days=30, max_pages=5):
 
 def plan_info(plan_id):
     """Look up a plan's name and monthly price from PayPal."""
-    r = requests.get(f"{BASE}/v1/billing/plans/{plan_id}", headers=headers())
+    r = requests.get(f"{BASE}/v1/billing/plans/{plan_id}", headers=headers(), timeout=TIMEOUT)
     if not r.ok:
         return "Subscription", 0.0
     d = r.json()

@@ -7,7 +7,7 @@ import requests
 from dotenv import load_dotenv
 
 import db
-from paypal_setup import headers
+from paypal_setup import TIMEOUT, app_url, headers
 
 load_dotenv()
 BASE = os.getenv("PAYPAL_BASE_URL")
@@ -86,15 +86,15 @@ def request_payment(member_id):
                 "experience_context": {
                     "brand_name": "Bouncer Pools",
                     "user_action": "PAY_NOW",
-                    "return_url": "https://example.com/paid",
-                    "cancel_url": "https://example.com/cancelled",
+                    "return_url": f"{app_url()}/?paid=1",
+                    "cancel_url": f"{app_url()}/?cancelled=1",
                 }
             }
         },
     }
     h = headers()
     h["PayPal-Request-Id"] = f"bouncer-pool-member-{member_id}"  # stops duplicate orders
-    r = requests.post(f"{BASE}/v2/checkout/orders", headers=h, json=body)
+    r = requests.post(f"{BASE}/v2/checkout/orders", headers=h, json=body, timeout=TIMEOUT)
     if not r.ok:
         raise RuntimeError(f"PayPal said {r.status_code}: {r.text}")
     data = r.json()
@@ -117,7 +117,7 @@ def sync_member(m):
     Returns a message when something changed (newly paid, or access restored)."""
     if not m["invoice_id"]:
         return None
-    r = requests.get(f"{BASE}/v2/checkout/orders/{m['invoice_id']}", headers=headers())
+    r = requests.get(f"{BASE}/v2/checkout/orders/{m['invoice_id']}", headers=headers(), timeout=TIMEOUT)
     if not r.ok:
         raise RuntimeError(f"PayPal said {r.status_code}: {r.text}")
     state = r.json().get("status", "")
@@ -127,6 +127,7 @@ def sync_member(m):
             f"{BASE}/v2/checkout/orders/{m['invoice_id']}/capture",
             headers=headers(),
             json={},
+            timeout=TIMEOUT,
         )
         if not c.ok:
             raise RuntimeError(f"PayPal said {c.status_code}: {c.text}")

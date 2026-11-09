@@ -227,8 +227,8 @@ def sec_subscriptions():
         c1, c2, c3, c4, c5 = st.columns([2, 1.3, 1.6, 2, 3])
         c1.write(f"**{s['service']}**")
         c2.write(f"${s['price']:.2f}/month")
-        c3.markdown(f"<span class='pill {s['status']}'>{s['status'].replace('_', ' ')}</span>",
-                 unsafe_allow_html=True)
+        label = {"APPROVAL_PENDING": "PENDING", "SUSPENDED": "PAUSED"}.get(s["status"], s["status"])
+        c3.markdown(f"<span class='pill {s['status']}'>{label}</span>", unsafe_allow_html=True)
         d = days_until(s["next_billing_time"])
         c4.write(f"Next charge in {d} day(s)" if d is not None else "No charge yet")
 
@@ -486,8 +486,8 @@ def sec_price():
                 st.error(f"Could not change the price: {e}")
 
 def sec_pools():
-    st.caption("Split a subscription with friends. Bouncer requests each share as a PayPal invoice "
-               "and tracks who has paid.")
+    st.caption("Split a subscription with friends. Bouncer requests each share as a PayPal payment "
+               "link (Checkout Orders) and tracks who has paid.")
     candidates = [s for s in subs if s["status"] != "CANCELLED"]
     existing = pools.list_pools()
 
@@ -529,32 +529,32 @@ def sec_pools():
     if not existing:
         st.info("No pools yet.")
 
+    status_class = {"PAID": "ACTIVE", "UNPAID": "APPROVAL_PENDING",
+                    "NOT_REQUESTED": "APPROVAL_PENDING", "CANCELLED": "CANCELLED"}
+    access_class = {"ACTIVE": "ACTIVE", "PENDING": "APPROVAL_PENDING", "REVOKED": "REVOKED"}
     for pool in existing:
         members = pools.list_members(pool["id"])
         paid = [m for m in members if m["status"] == "PAID"]
         with st.container(border=True):
-         h1, h2, h3 = st.columns([3, 1.2, 1.7])
-        h1.markdown(f"**{pool['name']}** &middot; ${pool['total']:.2f}/month &middot; "
+            h1, h2, h3 = st.columns([3, 1.2, 1.7])
+            h1.markdown(f"**{pool['name']}** &middot; ${pool['total']:.2f}/month &middot; "
                         f"shares due {pool['due_date']}")
-        if h2.button("Refresh payments", key=f"psync_{pool['id']}"):
-            try:
-                pools.sync_pool(pool["id"])
-            except Exception as e:
+            if h2.button("Refresh payments", key=f"psync_{pool['id']}"):
+                try:
+                    pools.sync_pool(pool["id"])
+                except Exception as e:
                     st.error(f"Could not refresh: {e}")
-            st.rerun()
-        if h3.button("Demo: pass the deadline", key=f"pdemo_{pool['id']}"):
+                st.rerun()
+            if h3.button("Demo: pass the deadline", key=f"pdemo_{pool['id']}"):
                 pools.expire_pool(pool["id"])
                 for msg in pools.enforce_deadlines():
                     alerts.send_alert(f"Access revoked: {msg}")
                 st.rerun()
-        collected = sum(m["share"] for m in paid)
-        st.progress(len(paid) / len(members) if members else 0,
+            collected = sum(m["share"] for m in paid)
+            st.progress(len(paid) / len(members) if members else 0,
                         text=f"{len(paid)} of {len(members)} shares paid "
                              f"(${collected:.2f} collected)")
-        status_class = {"PAID": "ACTIVE", "UNPAID": "APPROVAL_PENDING",
-                            "NOT_REQUESTED": "APPROVAL_PENDING", "CANCELLED": "CANCELLED"}
-        access_class = {"ACTIVE": "ACTIVE", "PENDING": "APPROVAL_PENDING", "REVOKED": "REVOKED"}
-        for m in members:
+            for m in members:
                 c1, c2, c3, c4, c5 = st.columns([2, 1, 1.5, 1.5, 2])
                 c1.markdown(f"**{m['name']}**")
                 c1.caption(m["email"])
@@ -571,7 +571,9 @@ def sec_pools():
                         st.rerun()
                     except Exception as e:
                         st.error(f"Could not request: {e}")
-                        live_events(False)
+
+    # keeps this page refreshing when a pool payment arrives through PayPal's webhook
+    live_events(False)
 
 SECTIONS = {
     "subs": ("Subscriptions", sec_subscriptions),
