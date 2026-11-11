@@ -6,7 +6,7 @@ It watches every subscription event from PayPal as it happens. An AI agent decid
 
 > **Sandbox only.** Bouncer runs against the PayPal sandbox. No real money moves.
 
-**Live demo:** https://bouncer-paypal-agent.onrender.com · **Demo video:** _add link here_
+**Live demo:** https://bouncer-paypal-agent.onrender.com · **Demo video:** https://youtu.be/hzRoOpd5dqQ
 
 ---
 
