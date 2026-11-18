@@ -217,7 +217,7 @@ def review_event(event, service=None):
             raise RuntimeError("Daily AI limit reached")
         resp = client.messages.create(
             model=MODEL,
-            max_tokens=1000,
+            max_tokens=1500,
             system=WATCH_SYSTEM,
             tools=WATCH_TOOLS,
             messages=history,

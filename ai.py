@@ -28,7 +28,7 @@ Respond with ONLY valid JSON, with no markdown and no extra text, in this shape:
 {"summary": "2-3 plain-English sentences about their spending",
  "suggestions": [{"service": "name", "alternative": "name from catalog",
                   "monthly_saving": 0.0, "reason": "one short sentence"}]}
-Only suggest alternatives from the catalog. Only suggest ones that save money.
+Only suggest alternatives from the catalog. Keep the summary to two sentences and give at most three suggestions, each reason under 15 words. Only suggest ones that save money.
 If there is nothing worth suggesting, return an empty suggestions list."""
 
 
@@ -43,7 +43,7 @@ def get_advice(subscriptions):
         raise RuntimeError("Daily AI limit reached. Please try again tomorrow.")
     msg = client.messages.create(
         model=MODEL,
-        max_tokens=800,
+        max_tokens=3000,
         system=SYSTEM,
         messages=[{"role": "user", "content": user_msg}],
     )
